@@ -20,6 +20,7 @@ const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
 const live = require('./live');
 const secrets = require('./secrets');
+const lan = require('./lan');
 
 // ---------------------------------------------------------------------------
 // Logging. When running in the background (autostart.ps1) there is no console window, so
@@ -493,6 +494,29 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/api/live') return send(res, 200, live.getLive());
     if (req.method === 'GET' && p === '/api/connections') return send(res, 200, connectionSummary());
 
+    // Phone access management (loopback only: this server never listens on the network).
+    if (req.method === 'GET' && p === '/api/phone') return send(res, 200, lan.status());
+    const phone = p.match(/^\/api\/phone\/(enable|pair-code|devices\/([\w-]+))$/);
+    if (phone && (req.method === 'POST' || req.method === 'DELETE')) {
+      if (req.headers['x-console-token'] !== TOKEN) return send(res, 403, { error: 'Missing or invalid console token. Reload the page.' });
+      try {
+        if (phone[1] === 'enable' && req.method === 'POST') {
+          const body = await readJsonBody(req);
+          await lan.setEnabled(Boolean(body.enabled));
+          return send(res, 200, { ok: true, message: body.enabled ? 'Phone access is on.' : 'Phone access is off.', ...lan.status() });
+        }
+        if (phone[1] === 'pair-code' && req.method === 'POST') return send(res, 200, lan.newPairingCode());
+        if (phone[2] && req.method === 'DELETE') {
+          return lan.revoke(phone[2]) ? send(res, 200, { ok: true, message: 'Phone removed. It can no longer connect.' })
+            : send(res, 404, { error: 'Unknown phone' });
+        }
+      } catch (e) {
+        const msg = e.code === 'EADDRINUSE' ? `Port ${lan.PORT} is already in use.` : e.message;
+        return send(res, 400, { error: msg });
+      }
+      return send(res, 405, { error: 'Method not allowed' });
+    }
+
     const conn = p.match(/^\/api\/connections\/([\w-]+)$/);
     if (conn && (req.method === 'POST' || req.method === 'DELETE')) {
       if (req.headers['x-console-token'] !== TOKEN) return send(res, 403, { error: 'Missing or invalid console token. Reload the page.' });
@@ -545,4 +569,5 @@ server.on('error', (err) => {
 server.listen(PORT, HOST, () => {
   console.log(`Security Labs Console: http://127.0.0.1:${PORT}`);
   console.log(`Tools folder: ${TOOLS}`);
+  lan.init({ buildState, getLive: live.getLive }); // starts the read-only phone server if enabled
 });

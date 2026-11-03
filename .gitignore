@@ -223,3 +223,9 @@ __marimo__/
 *.msi
 siem/splunk/addons/*
 !siem/splunk/addons/.gitkeep
+
+# Android build output and local signing material (key lives in %LOCALAPPDATA%)
+android/build/
+android/dist/
+*.jks
+*.keystore

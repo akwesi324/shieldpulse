@@ -18,6 +18,7 @@ powershell -ExecutionPolicy Bypass -File .\console\start-console.ps1
 | Live data | Overview cards for Splunk, the watchlist, Suricata and n8n, refreshed automatically. The Splunk page shows ingestion per index (last 15 min / 24 h / latest event) and the watchlist. The Suricata page shows the latest IDS alerts from `eve.json`. The n8n page shows workflows and recent executions. |
 | Watchlist | [`watches.json`](watches.json) holds 24-hour counts of key security events (failed logons, new accounts, admin group changes, scheduled tasks, service installs, encoded PowerShell, log clearing, Defender and Suricata alerts), each mapped to ATT&CK with one-click "open in Splunk". Edit the file to add your own searches. |
 | Connections | Save the Splunk login and an n8n API key once (pane footer, **Connections**). |
+| Phone access | Optional and **read-only**. Paired Android phones on your home Wi-Fi can view status and live data over pinned HTTPS (port 7743). They can't start or stop anything. Turn it on, pair phones and revoke them under **Connections**. See [android/README.md](../android/README.md). |
 
 ## Live data and connections
 

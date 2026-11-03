@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Shield with ECG pulse (same mark as the console favicon), scaled into the 108dp adaptive-icon
+     canvas so it stays inside the 66dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="2.6"
+        android:scaleY="2.6"
+        android:translateX="22.8"
+        android:translateY="22.8">
+        <path
+            android:pathData="M12,3.2 L4.8,6.2 L4.8,12.4 C4.8,16.4 8,20 12,21.2 C16,20 19.2,16.4 19.2,12.4 L19.2,6.2 Z"
+            android:fillColor="#2EFFFFFF"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.4"
+            android:strokeLineJoin="round"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M6.4,13 L8.4,13 L9.4,10.2 L11,15.8 L12.6,11.6 L13.5,13 L15.6,13 L17.6,13"
+            android:fillColor="#00000000"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.5"
+            android:strokeLineJoin="round"
+            android:strokeLineCap="round" />
+    </group>
+</vector>

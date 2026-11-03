@@ -14,6 +14,8 @@ const LIVE_POLL_MS = 15000;
 let state = null;
 let liveData = null;     // /api/live
 let connections = null;  // /api/connections
+let phone = null;        // /api/phone
+let pairCode = null;     // { code, expiresAt } shown after "Pair a phone"
 let selected = null;     // tool id, 'connections', or null for overview
 let lastRenderedKey = '';
 
@@ -136,7 +138,7 @@ function renderMain(force = false) {
   if (!state) return;
   if (selected === 'connections') {
     // Only re-render on real changes so typing in the forms is never interrupted by polling.
-    const key = 'conn:' + JSON.stringify(connections);
+    const key = 'conn:' + JSON.stringify([connections, phone, pairCode]);
     if (!force && key === lastRenderedKey) return;
     lastRenderedKey = key;
     main.replaceChildren(connectionsView());
@@ -439,7 +441,89 @@ function connectionsView() {
     ]),
     h('div', { class: 'card connection' },
       h('div', { class: 'conn-head' }, h('h3', {}, 'Suricata'), h('span', { class: 'pill ready' }, 'No credentials needed')),
-      h('p', { class: 'muted' }, 'Read directly from C:\\Program Files\\Suricata\\log\\eve.json while Suricata runs.')));
+      h('p', { class: 'muted' }, 'Read directly from C:\\Program Files\\Suricata\\log\\eve.json while Suricata runs.')),
+    phoneCard());
+}
+
+// ---------------------------------------------------------------- phone access (Android app)
+
+async function phoneApi(pathname, method, body) {
+  const res = await fetch(pathname, {
+    method,
+    headers: { 'X-Console-Token': TOKEN, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(out.error || `HTTP ${res.status}`);
+  return out;
+}
+
+function phoneCard() {
+  const p = phone;
+  if (!p) return null;
+  const on = p.enabled && p.listening;
+  const urls = p.addresses.map((a) => `${a.address}:${p.port}`);
+
+  const toggle = h('button', {
+    class: `btn${on ? '' : ' primary'}`, type: 'button',
+    onclick: async (e) => {
+      e.currentTarget.disabled = true;
+      try {
+        const out = await phoneApi('/api/phone/enable', 'POST', { enabled: !on });
+        toast(out.message);
+        if (!on) toast('If Windows Firewall asks about Node.js, allow it on Private networks only.');
+        pairCode = null;
+      } catch (err) { toast(err.message, true); }
+      await loadPhone(true);
+    },
+  }, on ? 'Turn off' : 'Turn on phone access');
+
+  const pairBlock = !on ? null : pairCode && Date.parse(pairCode.expiresAt) > Date.now()
+    ? h('div', { class: 'pair-box' },
+      h('div', { class: 'pair-step' }, '1. In the Security Labs app, enter this PC address and code:'),
+      h('div', { class: 'pair-values' },
+        h('div', {}, h('span', { class: 'muted small' }, 'PC address'), h('strong', { class: 'mono' }, urls[0] || 'no network found')),
+        h('div', {}, h('span', { class: 'muted small' }, 'Pairing code'), h('strong', { class: 'pair-code' }, pairCode.code.replace(/(\d{3})(\d{3})/, '$1 $2')))),
+      h('div', { class: 'pair-step' }, '2. Check that the phone shows this fingerprint before you tap Trust:'),
+      h('div', { class: 'pair-fp mono' }, p.fingerprintShort),
+      h('div', { class: 'muted small' }, `Code works once and expires at ${new Date(pairCode.expiresAt).toLocaleTimeString()}.`))
+    : h('button', {
+      class: 'btn primary', type: 'button',
+      onclick: async () => {
+        try { pairCode = await phoneApi('/api/phone/pair-code', 'POST'); } catch (err) { toast(err.message, true); }
+        await loadPhone(true);
+      },
+    }, 'Pair a phone');
+
+  return h('div', { class: 'card connection' },
+    h('div', { class: 'conn-head' }, h('h3', {}, 'Phone access (Android app)'),
+      h('span', { class: `pill ${on ? 'running' : ''}` }, on ? 'On, read-only' : p.enabled ? 'Starting...' : 'Off')),
+    h('p', { class: 'muted' }, 'Lets paired phones on your home Wi-Fi VIEW tool status, live data, the watchlist and alerts over HTTPS. Phones can never start or stop tools or change settings. Off by default.'),
+    on ? h('p', { class: 'small' }, 'Listening on ', urls.map((u, i) => [i ? ', ' : '', h('span', { class: 'mono' }, `https://${u}`)]),
+      ' · certificate ', h('span', { class: 'mono' }, p.fingerprintShort)) : null,
+    h('div', { class: 'conn-actions' }, toggle),
+    pairBlock,
+    p.devices.length ? [
+      h('h4', { class: 'devices-head' }, 'Paired phones'),
+      h('div', { class: 'devices' }, p.devices.map((d) => h('div', { class: 'device' },
+        h('span', {}, h('strong', {}, d.name), h('span', { class: 'muted small' }, ` · paired ${ago(d.pairedAt)} · last seen ${ago(d.lastSeen)}`)),
+        h('button', {
+          class: 'btn danger', type: 'button',
+          onclick: async () => {
+            try { toast((await phoneApi(`/api/phone/devices/${encodeURIComponent(d.id)}`, 'DELETE')).message); } catch (err) { toast(err.message, true); }
+            await loadPhone(true);
+          },
+        }, 'Revoke')))),
+    ] : null);
+}
+
+async function loadPhone(force = false) {
+  try {
+    const res = await fetch('/api/phone', { cache: 'no-store' });
+    if (res.ok) phone = await res.json();
+    if (pairCode && (!phone.pairing.active || Date.parse(pairCode.expiresAt) <= Date.now())) pairCode = null;
+    if (selected === 'connections') renderMain(force);
+  } catch { /* ignore */ }
 }
 
 function connectionCard(id, info, title, help, fields) {
@@ -567,7 +651,10 @@ if (hashMatch) selected = hashMatch[1];
 if (location.hash === '#connections') selected = 'connections';
 refresh();
 loadConnections();
+loadPhone();
 refreshLive();
 setInterval(refresh, POLL_MS);
 setInterval(refreshLive, LIVE_POLL_MS);
+// Phone status (new pairings, last seen) refreshes while the Connections page is open.
+setInterval(() => { if (selected === 'connections' && !document.hidden) loadPhone(); }, 5000);
 document.addEventListener('visibilitychange', () => { refresh(); refreshLive(); });
