@@ -18,6 +18,8 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
+const live = require('./live');
+const secrets = require('./secrets');
 
 const PORT = Number(process.env.LAB_CONSOLE_PORT || 7700);
 const HOST = '127.0.0.1';
@@ -385,6 +387,61 @@ function send(res, status, body, headers = {}) {
   res.end(isJson ? JSON.stringify(body) : body);
 }
 
+function readJsonBody(req, limit = 16 * 1024) {
+  return new Promise((resolve, reject) => {
+    if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) return reject(new Error('Expected application/json'));
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > limit) { reject(new Error('Request body too large')); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')); } catch { reject(new Error('Invalid JSON')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Connections (credentials are verified against the live service before being stored)
+
+const CONNECTIONS = {
+  splunk: {
+    label: 'Splunk',
+    async save(body) {
+      const username = String(body.username || '').trim();
+      const password = String(body.password || '');
+      if (!username || !password) throw new Error('Enter the Splunk username and password.');
+      const version = await live.testSplunk({ username, password }).catch((e) => {
+        throw new Error(e.auth ? 'Splunk rejected that username or password.' : `Could not reach Splunk: ${e.message}`);
+      });
+      await secrets.save('splunk', { username, password });
+      return `Connected to Splunk ${version} as ${username}.`;
+    },
+  },
+  n8n: {
+    label: 'n8n',
+    async save(body) {
+      const apiKey = String(body.apiKey || '').trim();
+      if (!apiKey) throw new Error('Paste an n8n API key.');
+      await live.testN8n(apiKey).catch((e) => {
+        throw new Error(e.auth ? 'n8n rejected that API key.' : `Could not reach n8n (is it running?): ${e.message}`);
+      });
+      await secrets.save('n8n', { apiKey });
+      return 'Connected to n8n.';
+    },
+  },
+};
+
+function connectionSummary() {
+  const stored = secrets.summary();
+  return Object.fromEntries(Object.entries(CONNECTIONS).map(([id, c]) => [id, {
+    label: c.label, configured: Boolean(stored[id]), savedAt: stored[id] ? stored[id].savedAt : null,
+  }]));
+}
+
 function serveFile(res, baseDir, relPath, extraHeaders = {}) {
   const resolved = path.resolve(baseDir, '.' + path.sep + relPath);
   if (!resolved.startsWith(path.resolve(baseDir) + path.sep) && resolved !== path.resolve(baseDir)) {
@@ -413,6 +470,27 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, html, { 'Content-Type': MIME['.html'], 'Content-Security-Policy': PAGE_CSP });
     }
     if (req.method === 'GET' && p === '/api/state') return send(res, 200, await buildState());
+    if (req.method === 'GET' && p === '/api/live') return send(res, 200, live.getLive());
+    if (req.method === 'GET' && p === '/api/connections') return send(res, 200, connectionSummary());
+
+    const conn = p.match(/^\/api\/connections\/([\w-]+)$/);
+    if (conn && (req.method === 'POST' || req.method === 'DELETE')) {
+      if (req.headers['x-console-token'] !== TOKEN) return send(res, 403, { error: 'Missing or invalid console token. Reload the page.' });
+      const c = CONNECTIONS[conn[1]];
+      if (!c) return send(res, 404, { error: 'Unknown connection' });
+      if (req.method === 'DELETE') {
+        secrets.remove(conn[1]);
+        live.invalidate(conn[1]);
+        return send(res, 200, { ok: true, message: `Removed the saved ${c.label} credentials.` });
+      }
+      try {
+        const message = await c.save(await readJsonBody(req));
+        live.invalidate(conn[1]);
+        return send(res, 200, { ok: true, message });
+      } catch (e) {
+        return send(res, 400, { error: e.message });
+      }
+    }
 
     const m = p.match(/^\/api\/tools\/([\w-]+)\/(?:actions\/(\d+)|(stop))$/);
     if (m && req.method === 'POST') {

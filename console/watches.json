@@ -1,0 +1,68 @@
+{
+  "$comment": "Security events the console counts over the last 24 hours in Splunk. Each 'spl' is a Splunk search (no leading 'search'). The console's own PowerShell helpers are excluded so they do not count as activity.",
+  "watches": [
+    {
+      "id": "failed-logons",
+      "title": "Failed logons",
+      "attack": "T1110",
+      "severity": "medium",
+      "spl": "index=wineventlog EventCode=4625"
+    },
+    {
+      "id": "account-created",
+      "title": "User account created",
+      "attack": "T1136.001",
+      "severity": "high",
+      "spl": "index=wineventlog EventCode=4720"
+    },
+    {
+      "id": "added-to-group",
+      "title": "User added to a local group",
+      "attack": "T1098",
+      "severity": "high",
+      "spl": "index=wineventlog EventCode=4732"
+    },
+    {
+      "id": "scheduled-task",
+      "title": "Scheduled task created",
+      "attack": "T1053.005",
+      "severity": "medium",
+      "spl": "index=wineventlog EventCode=4698"
+    },
+    {
+      "id": "service-installed",
+      "title": "Service installed",
+      "attack": "T1543.003",
+      "severity": "medium",
+      "spl": "index=wineventlog (EventCode=4697 OR EventCode=7045)"
+    },
+    {
+      "id": "encoded-powershell",
+      "title": "Encoded PowerShell command",
+      "attack": "T1059.001",
+      "severity": "high",
+      "spl": "index=sysmon EventCode=1 (CommandLine=\"* -enc *\" OR CommandLine=\"* -EncodedCommand *\" OR CommandLine=\"* -e *\") NOT ParentImage=\"*\\\\node.exe\""
+    },
+    {
+      "id": "log-cleared",
+      "title": "Security log cleared",
+      "attack": "T1070.001",
+      "severity": "critical",
+      "spl": "index=wineventlog EventCode=1102"
+    },
+    {
+      "id": "defender-detection",
+      "title": "Defender malware detection",
+      "attack": "",
+      "severity": "high",
+      "spl": "index=defender (EventCode=1116 OR EventCode=1117)"
+    },
+    {
+      "id": "ids-alerts",
+      "title": "Suricata IDS alerts",
+      "attack": "",
+      "severity": "medium",
+      "spl": "index=suricata event_type=alert"
+    }
+  ]
+}

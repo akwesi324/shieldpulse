@@ -9,8 +9,12 @@ const main = document.getElementById('main');
 const filterInput = document.getElementById('filter');
 const toggle = document.getElementById('paneToggle');
 
+const LIVE_POLL_MS = 15000;
+
 let state = null;
-let selected = null; // tool id or null for overview
+let liveData = null;     // /api/live
+let connections = null;  // /api/connections
+let selected = null;     // tool id, 'connections', or null for overview
 let lastRenderedKey = '';
 
 // ---------------------------------------------------------------- helpers
@@ -23,7 +27,7 @@ function h(tag, attrs = {}, ...children) {
     else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
     else el.setAttribute(k, v === true ? '' : v);
   }
-  for (const c of children.flat()) {
+  for (const c of children.flat(Infinity)) {
     if (c === null || c === undefined || c === false) continue;
     el.append(c instanceof Node ? c : document.createTextNode(String(c)));
   }
@@ -118,7 +122,7 @@ function renderMemory() {
 
 function select(id) {
   selected = id;
-  history.replaceState(null, '', id ? `#tool/${id}` : '#');
+  history.replaceState(null, '', id === 'connections' ? '#connections' : id ? `#tool/${id}` : '#');
   if (window.matchMedia('(max-width: 720px)').matches) setCollapsed(true, false);
   renderNav();
   renderMain(true);
@@ -126,12 +130,22 @@ function select(id) {
 }
 
 document.getElementById('homeLink').addEventListener('click', (e) => { e.preventDefault(); select(null); });
+document.getElementById('connLink').addEventListener('click', (e) => { e.preventDefault(); select('connections'); });
 
 function renderMain(force = false) {
   if (!state) return;
+  if (selected === 'connections') {
+    // Only re-render on real changes so typing in the forms is never interrupted by polling.
+    const key = 'conn:' + JSON.stringify(connections);
+    if (!force && key === lastRenderedKey) return;
+    lastRenderedKey = key;
+    main.replaceChildren(connectionsView());
+    return;
+  }
   const tool = selected && state.tools.find((t) => t.id === selected);
   // Avoid re-rendering (and losing text selection) when nothing visible changed.
-  const key = JSON.stringify(tool || state.tools.map((t) => [t.id, t.installed, t.running]));
+  const liveKey = liveData ? JSON.stringify(liveData, (k, v) => (k === 'updatedAt' || k === 'refreshing' ? undefined : v)) : '';
+  const key = JSON.stringify(tool || state.tools.map((t) => [t.id, t.installed, t.running])) + liveKey;
   if (!force && key === lastRenderedKey) return;
   lastRenderedKey = key;
   main.replaceChildren(tool ? toolView(tool) : overview());
@@ -151,6 +165,7 @@ function overview() {
       stat(`${installed}/${tools.length}`, 'tools installed'),
       stat(String(running), 'services running'),
       stat(`${freeGB} GB`, 'memory free')),
+    liveOverview(),
     h('h2', {}, 'Tools by area'),
     h('div', { class: 'cat-grid' }, state.categories.map((cat) => {
       const list = tools.filter((t) => t.category === cat.id);
@@ -198,6 +213,7 @@ function toolView(t) {
     h('p', { class: 'lead' }, t.description),
     actions,
     install,
+    livePanelFor(t.id),
     h('h2', {}, 'Details'),
     h('div', { class: 'card' }, meta),
     t.examples.length ? [h('h2', {}, 'Example commands'), h('div', { class: 'examples' }, t.examples.map(exampleRow))] : null);
@@ -244,6 +260,259 @@ function actionButton(tool, a) {
   }, label);
 }
 
+// ---------------------------------------------------------------- live data views
+
+function ago(value) {
+  if (!value) return 'never';
+  const ms = Date.now() - (typeof value === 'number' ? value : Date.parse(value));
+  if (!Number.isFinite(ms)) return '-';
+  if (ms < 60000) return 'just now';
+  if (ms < 3600000) return `${Math.round(ms / 60000)} min ago`;
+  if (ms < 86400000) return `${Math.round(ms / 3600000)} h ago`;
+  return `${Math.round(ms / 86400000)} d ago`;
+}
+
+const fmt = (n) => (n === null || n === undefined ? '-' : Number(n).toLocaleString());
+
+const STATE_LABEL = {
+  connected: ['running', 'Connected'],
+  'needs-credentials': ['missing', 'Needs connection'],
+  offline: ['idle', 'Not running'],
+  error: ['missing', 'Error'],
+  loading: ['idle', 'Loading...'],
+};
+
+function statePill(data) {
+  const [cls, label] = STATE_LABEL[(data && data.state) || 'loading'] || STATE_LABEL.loading;
+  return h('span', { class: `pill ${cls}` }, h('i', { class: `dot ${cls === 'idle' ? 'missing' : cls}` }), label,
+    data && data.refreshing ? h('span', { class: 'spin', title: 'Refreshing' }) : null);
+}
+
+function notice(data, withConnectButton) {
+  return h('div', { class: 'card notice' },
+    h('p', {}, (data && data.message) || 'Waiting for data...'),
+    withConnectButton && data && data.state === 'needs-credentials'
+      ? h('button', { class: 'btn primary', type: 'button', onclick: () => select('connections') }, 'Open Connections')
+      : null);
+}
+
+function sectionHead(title, data) {
+  return h('div', { class: 'section-head' },
+    h('h2', {}, title),
+    statePill(data),
+    data && data.updatedAt ? h('span', { class: 'updated' }, `updated ${ago(data.updatedAt)}`) : null);
+}
+
+function liveOverview() {
+  if (!liveData) return h('p', { class: 'tip' }, 'Loading live data...');
+  const s = liveData.splunk || {};
+  const r = liveData.suricata || {};
+  const n = liveData.n8n || {};
+  const events24h = s.ingestion ? s.ingestion.reduce((a, b) => a + b.count24h, 0) : null;
+  const hits = s.watches ? s.watches.filter((w) => w.count > 0) : [];
+
+  return h('div', {},
+    h('div', { class: 'section-head' }, h('h2', {}, 'Live'), h('span', { class: 'live-badge' }, h('i', {}), 'auto-refresh')),
+    h('div', { class: 'live-cards' },
+      liveCard('Splunk', s, s.state === 'connected'
+        ? [`${fmt(events24h)} events / 24 h`, `health: ${s.health}`]
+        : [s.message || '']),
+      liveCard('Watchlist', s, s.state === 'connected'
+        ? [hits.length ? `${hits.length} of ${s.watches.length} watches triggered` : 'No watch triggered in 24 h',
+          hits.length ? hits.map((w) => w.title).slice(0, 2).join(', ') : 'all quiet']
+        : ['Needs Splunk']),
+      liveCard('Suricata IDS', r, r.state === 'connected'
+        ? [`${r.alerts.length} recent alert${r.alerts.length === 1 ? '' : 's'}`, `last event ${ago(r.lastEvent)}`]
+        : [r.message || '']),
+      liveCard('n8n SOAR', n, n.state === 'connected'
+        ? [`${n.workflows.filter((w) => w.active).length} active / ${n.workflows.length} workflows`,
+          n.executions.length ? `last run: ${n.executions[0].status} ${ago(n.executions[0].startedAt)}` : 'no executions yet']
+        : [n.message || ''])),
+    s.state === 'connected' ? watchlistPanel(s, true) : null);
+}
+
+function liveCard(title, data, lines) {
+  return h('div', { class: 'card live-card' },
+    h('div', { class: 'live-card-head' }, h('strong', {}, title), statePill(data)),
+    lines.filter(Boolean).map((l, i) => h('div', { class: i === 0 ? 'live-main' : 'live-sub' }, l)));
+}
+
+function livePanelFor(toolId) {
+  if (!liveData) return null;
+  if (toolId === 'splunk') return splunkPanel(liveData.splunk);
+  if (toolId === 'suricata') return suricataPanel(liveData.suricata);
+  if (toolId === 'n8n') return n8nPanel(liveData.n8n);
+  return null;
+}
+
+function splunkPanel(s) {
+  if (!s || s.state !== 'connected') return [sectionHead('Live data', s), notice(s, true)];
+  return [
+    sectionHead('Ingestion', s),
+    h('div', { class: 'card table-card' }, h('table', {},
+      h('thead', {}, h('tr', {}, h('th', {}, 'Index'), h('th', { class: 'num' }, 'Last 15 min'), h('th', { class: 'num' }, 'Last 24 h'), h('th', {}, 'Latest event'), h('th', {}, ''))),
+      h('tbody', {}, s.ingestion.map((i) => h('tr', {},
+        h('td', {}, h('i', { class: `dot ${i.count15m > 0 ? 'running' : i.count24h > 0 ? 'ready' : 'missing'}` }), ' ', i.index),
+        h('td', { class: 'num' }, fmt(i.count15m)),
+        h('td', { class: 'num' }, fmt(i.count24h)),
+        h('td', {}, ago(i.lastEvent)),
+        h('td', {}, h('a', { href: i.link, target: '_blank', rel: 'noopener noreferrer' }, 'Search'))))))),
+    watchlistPanel(s, false),
+  ];
+}
+
+function watchlistPanel(s, compact) {
+  const rows = compact ? s.watches.filter((w) => w.count > 0) : s.watches;
+  return [
+    h('div', { class: 'section-head' }, h('h2', {}, compact ? 'Watchlist hits (24 h)' : 'Watchlist (24 h)'),
+      h('span', { class: 'updated' }, `updated ${ago(s.updatedAt)}`)),
+    rows.length
+      ? h('div', { class: 'watch-list' }, rows.map((w) => h('a', {
+        class: `card watch${w.count > 0 ? ' hit' : ''}`, href: w.link, target: '_blank', rel: 'noopener noreferrer',
+        title: `Open in Splunk: ${w.spl}`,
+      },
+      h('span', { class: `sev ${w.severity}` }, w.severity),
+      h('span', { class: 'watch-title' }, w.title, w.attack ? h('span', { class: 'attack' }, w.attack) : null),
+      h('span', { class: 'watch-count' }, w.error ? '!' : fmt(w.count)),
+      h('span', { class: 'watch-last' }, w.count > 0 ? ago(w.last) : ''))))
+      : h('div', { class: 'card notice' }, h('p', {}, 'No watchlist events in the last 24 hours.')),
+  ];
+}
+
+function suricataPanel(r) {
+  if (!r || r.state !== 'connected') return [sectionHead('Latest IDS alerts', r), notice(r, false)];
+  return [
+    sectionHead('Latest IDS alerts', r),
+    r.alerts.length
+      ? h('div', { class: 'card table-card' }, h('table', {},
+        h('thead', {}, h('tr', {}, h('th', {}, 'Time'), h('th', {}, 'Signature'), h('th', {}, 'Source'), h('th', {}, 'Destination'), h('th', { class: 'num' }, 'Sev'))),
+        h('tbody', {}, r.alerts.map((a) => h('tr', {},
+          h('td', { class: 'nowrap' }, ago(a.time)),
+          h('td', {}, a.signature, h('div', { class: 'muted small' }, `${a.category || ''} · SID ${a.sid}`)),
+          h('td', { class: 'mono' }, a.src), h('td', { class: 'mono' }, a.dest),
+          h('td', { class: 'num' }, h('span', { class: `sev s${a.severity}` }, String(a.severity))))))))
+      : h('div', { class: 'card notice' }, h('p', {}, `No alerts in the latest ${fmt(r.sampled)} Suricata events. That's normal on a quiet network.`)),
+    h('p', { class: 'tip' }, `eve.json: ${r.fileSizeMB} MB · last event ${ago(r.lastEvent)} · event types: ` +
+      Object.entries(r.types).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, v]) => `${k} ${fmt(v)}`).join(', ')),
+  ];
+}
+
+function n8nPanel(n) {
+  if (!n || n.state !== 'connected') return [sectionHead('Workflows', n), notice(n, true)];
+  return [
+    sectionHead('Workflows', n),
+    n.workflows.length
+      ? h('div', { class: 'card table-card' }, h('table', {},
+        h('thead', {}, h('tr', {}, h('th', {}, 'Workflow'), h('th', {}, 'State'), h('th', {}, 'Updated'))),
+        h('tbody', {}, n.workflows.map((w) => h('tr', {},
+          h('td', {}, h('a', { href: `${n.web}/workflow/${encodeURIComponent(w.id)}`, target: '_blank', rel: 'noopener noreferrer' }, w.name)),
+          h('td', {}, h('span', { class: `pill ${w.active ? 'running' : ''}` }, w.active ? 'Active' : 'Inactive')),
+          h('td', {}, ago(w.updatedAt)))))))
+      : h('div', { class: 'card notice' }, h('p', {}, 'No workflows yet. Playbooks are built in the SOAR lab step.')),
+    h('h2', {}, 'Recent executions'),
+    n.executions.length
+      ? h('div', { class: 'card table-card' }, h('table', {},
+        h('thead', {}, h('tr', {}, h('th', {}, 'Workflow'), h('th', {}, 'Status'), h('th', {}, 'Trigger'), h('th', {}, 'Started'))),
+        h('tbody', {}, n.executions.map((e) => h('tr', {},
+          h('td', {}, e.workflow),
+          h('td', {}, h('span', { class: `pill ${e.status === 'success' ? 'running' : e.status === 'error' ? 'missing' : ''}` }, e.status)),
+          h('td', {}, e.mode || '-'), h('td', {}, ago(e.startedAt)))))))
+      : h('div', { class: 'card notice' }, h('p', {}, 'No executions yet.')),
+  ];
+}
+
+// ---------------------------------------------------------------- connections
+
+function connectionsView() {
+  const c = connections || {};
+  return h('div', { class: 'main-inner' },
+    h('div', { class: 'crumb' }, 'Settings'),
+    h('h1', {}, 'Connections'),
+    h('p', { class: 'lead' }, 'Credentials the console uses to read live data from your lab tools. They are checked against the running service, then encrypted with Windows DPAPI so only your Windows account can decrypt them. They are never sent back to the browser.'),
+
+    connectionCard('splunk', c.splunk, 'Splunk', 'The admin login you chose when installing Splunk. Used for health, ingestion counts and the watchlist.', [
+      { name: 'username', label: 'Username', type: 'text', value: 'admin', autocomplete: 'username' },
+      { name: 'password', label: 'Password', type: 'password', autocomplete: 'current-password' },
+    ]),
+    connectionCard('n8n', c.n8n, 'n8n', 'Start n8n, open it, then go to Settings > n8n API > Create an API key and paste it here. Used for workflows and executions.', [
+      { name: 'apiKey', label: 'API key', type: 'password', autocomplete: 'off' },
+    ]),
+    h('div', { class: 'card connection' },
+      h('div', { class: 'conn-head' }, h('h3', {}, 'Suricata'), h('span', { class: 'pill ready' }, 'No credentials needed')),
+      h('p', { class: 'muted' }, 'Read directly from C:\\Program Files\\Suricata\\log\\eve.json while Suricata runs.')));
+}
+
+function connectionCard(id, info, title, help, fields) {
+  const configured = info && info.configured;
+  const form = h('form', {
+    class: 'conn-form', autocomplete: 'on',
+    onsubmit: async (e) => {
+      e.preventDefault();
+      const btn = form.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      btn.textContent = 'Checking...';
+      const body = Object.fromEntries(new FormData(form).entries());
+      try {
+        const res = await fetch(`/api/connections/${id}`, {
+          method: 'POST', headers: { 'X-Console-Token': TOKEN, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        const out = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(out.error || `HTTP ${res.status}`);
+        toast(out.message || 'Saved');
+        form.reset();
+        await loadConnections(true);
+        refreshLive();
+      } catch (err) {
+        toast(err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = configured ? 'Update' : 'Connect';
+      }
+    },
+  },
+  fields.map((f) => h('label', {}, h('span', {}, f.label),
+    h('input', { name: f.name, type: f.type, value: f.value || null, autocomplete: f.autocomplete, required: true, spellcheck: 'false' }))),
+  h('div', { class: 'conn-actions' },
+    h('button', { class: 'btn primary', type: 'submit' }, configured ? 'Update' : 'Connect'),
+    configured ? h('button', {
+      class: 'btn', type: 'button',
+      onclick: async () => {
+        const res = await fetch(`/api/connections/${id}`, { method: 'DELETE', headers: { 'X-Console-Token': TOKEN } });
+        const out = await res.json().catch(() => ({}));
+        toast(out.message || out.error || 'Removed', !res.ok);
+        await loadConnections(true);
+        refreshLive();
+      },
+    }, 'Forget') : null));
+
+  return h('div', { class: 'card connection' },
+    h('div', { class: 'conn-head' }, h('h3', {}, title),
+      h('span', { class: `pill ${configured ? 'running' : 'missing'}` }, configured ? `Saved ${ago(info.savedAt)}` : 'Not connected')),
+    h('p', { class: 'muted' }, help),
+    form);
+}
+
+async function loadConnections(force = false) {
+  try {
+    const res = await fetch('/api/connections', { cache: 'no-store' });
+    if (!res.ok) return;
+    connections = await res.json();
+    const missing = Object.values(connections).some((c) => !c.configured);
+    document.getElementById('connDot').className = `conn-dot${missing ? ' warn' : ' ok'}`;
+    if (selected === 'connections') renderMain(force);
+  } catch { /* server unreachable; refresh() reports it */ }
+}
+
+async function refreshLive() {
+  if (document.hidden) return;
+  try {
+    const res = await fetch('/api/live', { cache: 'no-store' });
+    if (!res.ok) return;
+    liveData = await res.json();
+    renderMain();
+  } catch { /* ignore; next poll retries */ }
+}
+
 function stopIcon() {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 16 16');
@@ -284,7 +553,7 @@ async function refresh() {
     const res = await fetch('/api/state', { cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     state = await res.json();
-    if (selected && !state.tools.some((t) => t.id === selected)) selected = null;
+    if (selected && selected !== 'connections' && !state.tools.some((t) => t.id === selected)) selected = null;
     renderNav();
     renderMemory();
     renderMain();
@@ -295,6 +564,10 @@ async function refresh() {
 
 const hashMatch = location.hash.match(/^#tool\/([\w-]+)$/);
 if (hashMatch) selected = hashMatch[1];
+if (location.hash === '#connections') selected = 'connections';
 refresh();
+loadConnections();
+refreshLive();
 setInterval(refresh, POLL_MS);
-document.addEventListener('visibilitychange', refresh);
+setInterval(refreshLive, LIVE_POLL_MS);
+document.addEventListener('visibilitychange', () => { refresh(); refreshLive(); });

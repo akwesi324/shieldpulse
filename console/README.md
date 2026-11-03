@@ -15,6 +15,25 @@ powershell -ExecutionPolicy Bypass -File .\console\start-console.ps1
 | Actions | Open web UIs (Splunk, n8n, Velociraptor, CyberChef), launch GUI tools, open a terminal in the tool's folder, start or stop services. Admin actions show a UAC prompt. |
 | Memory meter | RAM in use, shown in the pane footer, so you can run one heavy service at a time on 8 GB. |
 | CyberChef | Served locally at `/cyberchef/`, fully offline. |
+| Live data | Overview cards for Splunk, the watchlist, Suricata and n8n, refreshed automatically. The Splunk page shows ingestion per index (last 15 min / 24 h / latest event) and the watchlist. The Suricata page shows the latest IDS alerts from `eve.json`. The n8n page shows workflows and recent executions. |
+| Watchlist | [`watches.json`](watches.json) holds 24-hour counts of key security events (failed logons, new accounts, admin group changes, scheduled tasks, service installs, encoded PowerShell, log clearing, Defender and Suricata alerts), each mapped to ATT&CK with one-click "open in Splunk". Edit the file to add your own searches. |
+| Connections | Save the Splunk login and an n8n API key once (pane footer, **Connections**). |
+
+## Live data and connections
+
+| Source | How the console reads it | Refresh |
+|---|---|---|
+| Splunk | REST API on `127.0.0.1:8089`: server info, health, `tstats` per index, one search per watch | 90 s |
+| Suricata | Reads the tail of `C:\Program Files\Suricata\log\eve.json` (last 2 MB) | 10 s |
+| n8n | `/healthz`, plus `/api/v1/workflows` and `/api/v1/executions` with the API key | 20 s |
+
+Sources are refreshed in the background and cached, so the page loads instantly and the tools aren't overloaded. Each source shows a clear state: **Connected**, **Needs connection**, **Not running** or **Error**.
+
+**Credentials:**
+- Before saving, each one is checked against the running service.
+- They're encrypted with **Windows DPAPI** (`ConvertFrom-SecureString`), so only your Windows account on this PC can decrypt them. They're stored in `%LOCALAPPDATA%\SecurityLabs\console\secrets.json`, outside the repo.
+- They're passed to the encryption helper on stdin, never on a command line.
+- They're never returned to the browser, and **Forget** deletes them.
 
 ## Security
 
