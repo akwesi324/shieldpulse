@@ -218,3 +218,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Splunk installers and Splunkbase add-on packages (licensed; download them yourself)
+*.msi
+siem/splunk/addons/*
+!siem/splunk/addons/.gitkeep

@@ -17,7 +17,10 @@ Splunk Enterprise (Free license) runs directly on Windows and collects logs from
 | Path | Contents |
 |---|---|
 | `setup.ps1` | Turns on Sysmon, the audit policy and PowerShell logging, then checks that events are being recorded |
-| `splunk/` | Splunk `inputs.conf` and add-on notes *(coming next)* |
+| `splunk/install-splunk.ps1` | Installs Splunk, the lab app and the add-ons, then checks that events are arriving |
+| `splunk/verify-splunk.ps1` | Checks over the REST API that events arrive and that the add-ons extract fields (no Administrator needed) |
+| `splunk/security_labs/` | Splunk app with this lab's indexes (`default/`) and event log inputs (`local/`) |
+| `splunk/addons/` | Put the Splunkbase add-on downloads here (excluded from git) |
 | `detections/` | Sigma rules, their SPL versions and a safe test for each rule |
 | `dashboards/` | Exported Splunk dashboards |
 
@@ -64,9 +67,68 @@ The original settings are backed up to `C:\ProgramData\SecurityLabs\` on the fir
 - **The 4104 check fails:** close and reopen PowerShell. Logging policy only applies to processes started after the change.
 - **The Sysmon download fails:** download `Sysmon.zip` from Sysinternals yourself, extract it to `C:\ProgramData\SecurityLabs\Sysmon\`, and run the script again.
 
+## Step 2: Install Splunk
+
+### 2a. Download (needs a free splunk.com account)
+
+| What | Where | Save to |
+|---|---|---|
+| Splunk Enterprise, Windows `.msi` | [splunk.com/download](https://www.splunk.com/en_us/download/splunk-enterprise.html) | `Downloads\` (the script finds it there) |
+| Splunk Add-on for Microsoft Windows | [Splunkbase app 742](https://splunkbase.splunk.com/app/742) | `siem\splunk\addons\` |
+| Splunk Add-on for Sysmon | [Splunkbase app 5709](https://splunkbase.splunk.com/app/5709) | `siem\splunk\addons\` |
+
+The installers and add-ons are licensed by Splunk and are excluded from git.
+
+### 2b. Run the installer script (as Administrator)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\siem\splunk\install-splunk.ps1
+```
+
+The script:
+
+1. Checks that the MSI is signed by Splunk, asks you to choose an admin password, and installs Splunk silently. Splunk runs as Local System so it can read the Security log.
+2. Copies the [`security_labs`](splunk/security_labs/default/) app into Splunk. The app defines the indexes `wineventlog`, `sysmon`, `powershell` and `defender` (each with a size cap) and the event log inputs.
+3. Installs every add-on in `siem\splunk\addons\`.
+4. Restarts Splunk and checks that events are arriving in each index.
+
+You can run it again after changing the app or adding add-ons; it skips the install step if Splunk is already there.
+
+Then open **http://localhost:8000** and try:
+
+```spl
+index=sysmon EventCode=1 | table _time Image CommandLine ParentImage
+```
+
+### 2c. Verify at any time
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\siem\splunk\verify-splunk.ps1
+```
+
+A healthy run looks like this:
+
+```
+[OK]   wineventlog    16,795 events
+[OK]   sysmon         12,325 events
+[OK]   powershell      2,004 events
+[OK]   defender           63 events
+[OK]   Sysmon add-on: CommandLine on Sysmon event 1
+[OK]   Windows add-on: EventCode on Security events  (e.g. 4688)
+```
+
+### Splunk troubleshooting
+
+- **`wineventlog` is empty but the other indexes have data:** `Splunk_TA_windows` disables the Security and System inputs in its `default/inputs.conf`. Between apps' `default/` folders, Splunk applies settings in ASCII order of the app name, so the uppercase `Splunk_TA_windows` overrides lowercase app names. That's why this lab's inputs live in `security_labs/local/`, which always wins.
+- **Field extraction checks fail:** check that both add-ons are in `splunk/addons/`, then re-run `install-splunk.ps1`.
+- **Searches show many of Splunk's own processes** (`splunkd`, `splunk-optimize`, `pg_isready`): this is expected, because Splunk is monitoring the machine it runs on. Filter them out in detections, for example `NOT Image="C:\\Program Files\\Splunk\\*"`.
+
+### License note
+
+A new install starts on a **60-day Enterprise trial**. The **Free** license (500 MB/day) removes **alerting** and login. The SOAR integration needs alerts, so request the free **Splunk Developer License** (10 GB/day, renewable every 6 months) instead of switching to Free.
+
 ## Next steps
 
-- [ ] Install Splunk Enterprise and switch to the Free license
-- [ ] Add Windows Event Log inputs (`splunk/inputs.conf`)
-- [ ] Install the Splunk Add-on for Microsoft Windows and the Sysmon add-on
+- [x] Instrument the machine (`setup.ps1`)
+- [x] Install Splunk, the add-ons and the inputs (`splunk/install-splunk.ps1`)
 - [ ] Write the first detections
