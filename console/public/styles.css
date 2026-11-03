@@ -60,7 +60,10 @@ a { color: var(--accent); }
 .pane-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform .2s ease; }
 .collapsed .pane-toggle svg { transform: rotate(180deg); }
 .brand { display: flex; align-items: center; gap: 8px; color: var(--text); text-decoration: none; font-weight: 650; font-size: 15px; white-space: nowrap; min-width: 0; }
-.brand-mark { width: 20px; height: 20px; fill: var(--accent); flex: none; }
+.brand-mark { width: 22px; height: 22px; flex: none; }
+.brand-mark .shield-fill { fill: var(--accent); opacity: .18; }
+.brand-mark .shield-outline { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+.brand-mark .pulse { fill: none; stroke: var(--accent); stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; }
 .collapsed .brand { display: none; }
 
 .pane-search { padding: 4px 12px 8px; }
