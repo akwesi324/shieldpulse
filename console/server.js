@@ -21,6 +21,26 @@ const { execFile, spawn } = require('child_process');
 const live = require('./live');
 const secrets = require('./secrets');
 
+// ---------------------------------------------------------------------------
+// Logging. When running in the background (autostart.ps1) there is no console window, so
+// everything is also appended to %LOCALAPPDATA%\SecurityLabs\console\console.log (rotated at 1 MB).
+
+const LOG_FILE = path.join(process.env.LOCALAPPDATA || os.homedir(), 'SecurityLabs', 'console', 'console.log');
+try {
+  fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+  if (fs.existsSync(LOG_FILE) && fs.statSync(LOG_FILE).size > 1024 * 1024) fs.renameSync(LOG_FILE, LOG_FILE + '.1');
+} catch { /* logging is best effort */ }
+for (const level of ['log', 'error']) {
+  const original = console[level].bind(console);
+  console[level] = (...args) => {
+    original(...args);
+    try { fs.appendFileSync(LOG_FILE, `${new Date().toISOString()} ${level === 'error' ? 'ERROR ' : ''}${args.join(' ')}\n`); } catch { /* ignore */ }
+  };
+}
+// Log and exit on unexpected errors; the scheduled task restarts the console within a minute.
+process.on('uncaughtException', (err) => { console.error('Uncaught exception:', err && err.stack || err); process.exit(1); });
+process.on('unhandledRejection', (err) => { console.error('Unhandled rejection:', err && err.stack || err); });
+
 const PORT = Number(process.env.LAB_CONSOLE_PORT || 7700);
 const HOST = '127.0.0.1';
 const REPO = path.resolve(__dirname, '..');
