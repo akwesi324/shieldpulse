@@ -7,6 +7,16 @@ A home **SIEM** lab and a separate **SOAR** lab. Both run directly on a Windows 
 | [SIEM](siem/) | Splunk Enterprise (Free) + Sysmon + Windows audit policy + PowerShell logging | Log collection, parsing, ATT&CK-mapped detections, dashboards |
 | [SOAR](soar/) | n8n + Python mock alert generator + PowerShell response actions | Alert enrichment, case handling, human approval, automated response |
 
+## Security Labs Console
+
+All lab tools are listed in one local web console with a retractable left pane, live status and start/stop buttons:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\console\start-console.ps1   # http://127.0.0.1:7700
+```
+
+Install the tools with [`tools/install-tools.ps1`](tools/). See [tools/README.md](tools/README.md) for the full list and how each download is verified.
+
 ## Repository layout
 
 ```
@@ -20,6 +30,8 @@ security-labs/
 │   ├── alert-generator/ # mock alert source (Python)
 │   ├── workflows/       # n8n playbook exports
 │   └── actions/         # PowerShell response actions
+├── tools/               # manifest.json (every tool) + install-tools.ps1
+├── console/             # Security Labs Console (local web UI, left tools pane)
 ├── scripts/             # start/stop helpers (one lab at a time)
 └── docs/                # architecture notes and screenshots
 ```

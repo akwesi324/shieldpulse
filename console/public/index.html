@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="console-token" content="__CONSOLE_TOKEN__">
+  <title>Security Labs Console</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app" id="app">
+    <aside class="pane" id="pane" aria-label="Lab tools">
+      <div class="pane-head">
+        <button class="pane-toggle" id="paneToggle" type="button" aria-controls="pane" aria-expanded="true" title="Collapse tools pane ( [ )">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+        </button>
+        <a class="brand" href="#" id="homeLink">
+          <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z"/></svg>
+          <span class="pane-label">Security Labs</span>
+        </a>
+      </div>
+
+      <div class="pane-search pane-label">
+        <input id="filter" type="search" placeholder="Filter tools" autocomplete="off" aria-label="Filter tools">
+      </div>
+
+      <nav class="tool-nav" id="toolNav" aria-label="Tools"></nav>
+
+      <div class="pane-foot">
+        <div class="mem" id="mem" title="Memory in use">
+          <div class="mem-row pane-label"><span>Memory</span><span id="memText">-</span></div>
+          <div class="mem-bar"><div class="mem-fill" id="memFill"></div></div>
+        </div>
+        <div class="legend pane-label">
+          <span><i class="dot running"></i>Running</span>
+          <span><i class="dot ready"></i>Installed</span>
+          <span><i class="dot missing"></i>Not installed</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main" id="main" tabindex="-1">
+      <div class="loading">Loading tools...</div>
+    </main>
+  </div>
+
+  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>

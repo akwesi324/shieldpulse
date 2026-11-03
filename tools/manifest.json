@@ -1,0 +1,356 @@
+{
+  "$comment": "Single source of truth for lab tools. Read by tools/install-tools.ps1 (install) and console/server.js (status + actions). Tokens: {TOOLS}=%LOCALAPPDATA%\\SecurityLabs\\tools, {DIR}={TOOLS}\\<id>, {ENTRY}=resolved main file recorded at install, {ENTRYDIR}=its folder, {ENTRY:<id>}=another tool's resolved main file, {REPO}=repo root, {PF}=C:\\Program Files.",
+  "categories": [
+    { "id": "siem", "label": "SIEM" },
+    { "id": "hunt", "label": "Detection & Hunting" },
+    { "id": "dfir", "label": "Attack Simulation & DFIR" },
+    { "id": "soar", "label": "SOAR & Threat Intel" },
+    { "id": "net", "label": "Network Monitoring" }
+  ],
+  "tools": [
+    {
+      "id": "splunk",
+      "name": "Splunk Enterprise",
+      "category": "siem",
+      "version": "10.6.1.1",
+      "description": "The SIEM. Collects Windows, Sysmon, PowerShell, Defender and Suricata logs into separate indexes for searching, detections and dashboards.",
+      "docs": "https://docs.splunk.com/Documentation/Splunk",
+      "install": { "type": "external", "script": "siem\\splunk\\install-splunk.ps1", "admin": true },
+      "detect": { "service": "Splunkd" },
+      "status": { "service": "Splunkd", "url": "http://localhost:8000" },
+      "actions": [
+        { "label": "Open Splunk Web", "type": "web", "url": "http://localhost:8000", "primary": true },
+        { "label": "Verify ingestion", "type": "terminal", "cwd": "{REPO}", "command": "& .\\siem\\splunk\\verify-splunk.ps1" },
+        { "label": "Start", "type": "service", "service": "Splunkd", "op": "start" },
+        { "label": "Stop", "type": "service", "service": "Splunkd", "op": "stop", "stop": true }
+      ],
+      "examples": [
+        "index=sysmon EventCode=1 NOT Image=\"C:\\\\Program Files\\\\Splunk\\\\*\" | table _time Image CommandLine ParentImage",
+        "index=wineventlog EventCode=4625 | stats count by Account_Name, Source_Network_Address",
+        "index=suricata event_type=alert | stats count by alert.signature"
+      ]
+    },
+    {
+      "id": "sysmon",
+      "name": "Sysmon",
+      "category": "siem",
+      "version": "latest (Sysinternals)",
+      "description": "Detailed endpoint telemetry: process creation, network connections, file and registry changes. Installed by siem\\setup.ps1 with the SwiftOnSecurity config.",
+      "docs": "https://learn.microsoft.com/sysinternals/downloads/sysmon",
+      "install": { "type": "external", "script": "siem\\setup.ps1", "admin": true },
+      "detect": { "service": "Sysmon64" },
+      "status": { "service": "Sysmon64" },
+      "actions": [
+        { "label": "Open Sysmon log", "type": "gui", "path": "eventvwr.exe", "args": ["/c:Microsoft-Windows-Sysmon/Operational"], "primary": true },
+        { "label": "Re-verify logging", "type": "terminal", "cwd": "{REPO}", "command": "& .\\siem\\setup.ps1 -VerifyOnly", "admin": true },
+        { "label": "Start", "type": "service", "service": "Sysmon64", "op": "start" },
+        { "label": "Stop", "type": "service", "service": "Sysmon64", "op": "stop", "stop": true }
+      ]
+    },
+
+    {
+      "id": "python",
+      "name": "Lab Python environment",
+      "category": "hunt",
+      "hidden": true,
+      "description": "Shared virtual environment for Sigma CLI and the SOAR Python toolkit.",
+      "install": { "type": "venv" }
+    },
+    {
+      "id": "sigma-cli",
+      "name": "Sigma CLI",
+      "category": "hunt",
+      "version": "latest (pip)",
+      "description": "Converts vendor-neutral Sigma detection rules into Splunk SPL. Used to build the lab's detections.",
+      "docs": "https://github.com/SigmaHQ/sigma-cli",
+      "install": { "type": "pip", "venv": "python", "packages": ["sigma-cli", "pysigma-backend-splunk", "pysigma-pipeline-sysmon", "pysigma-pipeline-windows"], "entry": "Scripts\\sigma.exe" },
+      "detect": { "path": "{TOOLS}\\python\\Scripts\\sigma.exe" },
+      "actions": [
+        { "label": "Open terminal", "type": "terminal", "cwd": "{REPO}", "command": "& '{TOOLS}\\python\\Scripts\\Activate.ps1'; sigma version; sigma list targets", "primary": true }
+      ],
+      "examples": [
+        "sigma convert -t splunk -p sysmon -p splunk_windows \"{TOOLS}\\sigma-rules\\rules\\windows\\process_creation\\proc_creation_win_whoami_execution.yml\""
+      ]
+    },
+    {
+      "id": "sigma-rules",
+      "name": "SigmaHQ rules",
+      "category": "hunt",
+      "version": "r2026-07-01",
+      "description": "The community Sigma rule set (3,000+ rules mapped to MITRE ATT&CK). Source material for detections and for Chainsaw/Hayabusa hunts.",
+      "docs": "https://github.com/SigmaHQ/sigma",
+      "install": {
+        "type": "archive",
+        "url": "https://github.com/SigmaHQ/sigma/releases/download/r2026-07-01/sigma_all_rules.zip",
+        "sha256": "5725c91b5813587ad6a4b0b8e0233fa44348b1595f818d8b7fd39d6033385085",
+        "entry": "rules"
+      },
+      "actions": [
+        { "label": "Open rules folder", "type": "folder", "path": "{ENTRY}", "primary": true }
+      ]
+    },
+    {
+      "id": "hayabusa",
+      "name": "Hayabusa",
+      "category": "hunt",
+      "version": "4.3.1",
+      "description": "Fast Windows event log threat hunting and timeline generation using Sigma rules. Runs against live logs or exported .evtx files.",
+      "docs": "https://github.com/Yamato-Security/hayabusa",
+      "install": {
+        "type": "archive",
+        "url": "https://github.com/Yamato-Security/hayabusa/releases/download/v4.3.1/hayabusa-4.3.1-win-x64.zip",
+        "sha256": "e4196a5e9c9bf46265a45d5272efb2daa489871f2f8ad0c2485a72a0fd0c8ddb",
+        "entry": "hayabusa*.exe"
+      },
+      "actions": [
+        { "label": "Open terminal (Admin)", "type": "terminal", "cwd": "{ENTRYDIR}", "command": "& '{ENTRY}' help", "admin": true, "primary": true }
+      ],
+      "examples": [
+        ".\\hayabusa-4.3.1-win-x64.exe csv-timeline -l -o live-timeline.csv",
+        ".\\hayabusa-4.3.1-win-x64.exe search -l -k \"mimikatz\""
+      ]
+    },
+    {
+      "id": "chainsaw",
+      "name": "Chainsaw",
+      "category": "hunt",
+      "version": "2.17.1",
+      "description": "Rapid first-response search and Sigma hunting over Windows event logs, from WithSecure.",
+      "docs": "https://github.com/WithSecureLabs/chainsaw",
+      "install": {
+        "type": "archive",
+        "url": "https://github.com/WithSecureLabs/chainsaw/releases/download/v2.17.1/chainsaw_all_platforms%2Brules.zip",
+        "sha256": "74b9ea341e31c0a704a79c0e779c2f6e31670f1f43cad3b450b21a91639dbec3",
+        "entry": "chainsaw_x86_64-pc-windows-msvc.exe"
+      },
+      "actions": [
+        { "label": "Open terminal (Admin)", "type": "terminal", "cwd": "{ENTRYDIR}", "command": "& '{ENTRY}' --help", "admin": true, "primary": true }
+      ],
+      "examples": [
+        ".\\chainsaw_x86_64-pc-windows-msvc.exe hunt C:\\Windows\\System32\\winevt\\Logs -s \"{TOOLS}\\sigma-rules\\rules\" --mapping mappings\\sigma-event-logs-all.yml --level high",
+        ".\\chainsaw_x86_64-pc-windows-msvc.exe search mimikatz -i C:\\Windows\\System32\\winevt\\Logs"
+      ]
+    },
+    {
+      "id": "deepbluecli",
+      "name": "DeepBlueCLI",
+      "category": "hunt",
+      "version": "commit 2eecc65",
+      "description": "SANS PowerShell script that flags suspicious activity in Security, System, PowerShell and Sysmon logs.",
+      "docs": "https://github.com/sans-blue-team/DeepBlueCLI",
+      "install": {
+        "type": "archive",
+        "url": "https://codeload.github.com/sans-blue-team/DeepBlueCLI/zip/2eecc65698e8666408ece67525577c895676d579",
+        "sha256": "e8af33127970f1ce6955e1159c8fc11f3a11267a8fa4edc3dad568c9aac54f5f",
+        "entry": "DeepBlue.ps1"
+      },
+      "actions": [
+        { "label": "Open terminal (Admin)", "type": "terminal", "cwd": "{ENTRYDIR}", "command": "Get-Help .\\DeepBlue.ps1", "admin": true, "primary": true }
+      ],
+      "examples": [
+        ".\\DeepBlue.ps1 -log security",
+        ".\\DeepBlue.ps1 -log Microsoft-Windows-Sysmon/Operational"
+      ]
+    },
+    {
+      "id": "yara",
+      "name": "YARA",
+      "category": "hunt",
+      "version": "4.6.0",
+      "description": "Pattern-matching engine for identifying and classifying malware by file content.",
+      "docs": "https://yara.readthedocs.io/",
+      "install": {
+        "type": "archive",
+        "url": "https://github.com/VirusTotal/yara/releases/download/v4.6.0/yara-4.6.0-2443-win64.zip",
+        "sha256": "5e7124f173ed442458429ac0f79a4db2c024cc183c595737d477a7575d81e6dc",
+        "entry": "yara64.exe"
+      },
+      "actions": [
+        { "label": "Open terminal", "type": "terminal", "cwd": "{DIR}", "command": "& '{ENTRY}' --help", "primary": true }
+      ],
+      "examples": [
+        ".\\yara64.exe -r my_rules.yar C:\\Users\\Public\\Downloads"
+      ]
+    },
+
+    {
+      "id": "atomic-red-team",
+      "name": "Atomic Red Team",
+      "category": "dfir",
+      "version": "Invoke-AtomicRedTeam 2.3.0",
+      "description": "Small, ATT&CK-mapped attack tests used to check that detections fire. On this machine use benign tests only (discovery, scheduled tasks, encoded PowerShell); Defender stays on.",
+      "docs": "https://github.com/redcanaryco/invoke-atomicredteam/wiki",
+      "install": { "type": "psmodule", "module": "Invoke-AtomicRedTeam", "version": "2.3.0", "atomics": true },
+      "detect": { "path": "{DIR}\\atomics" },
+      "actions": [
+        { "label": "Open terminal", "type": "terminal", "cwd": "{DIR}", "command": "Import-Module Invoke-AtomicRedTeam; $PSDefaultParameterValues = @{ 'Invoke-AtomicTest:PathToAtomicsFolder' = '{DIR}\\atomics' }; Write-Host 'Try: Invoke-AtomicTest T1082 -ShowDetailsBrief' -ForegroundColor Cyan", "primary": true }
+      ],
+      "examples": [
+        "Invoke-AtomicTest T1082 -ShowDetailsBrief",
+        "Invoke-AtomicTest T1082 -TestNumbers 1",
+        "Invoke-AtomicTest T1082 -TestNumbers 1 -Cleanup"
+      ]
+    },
+    {
+      "id": "sysinternals",
+      "name": "Sysinternals Suite",
+      "category": "dfir",
+      "version": "latest (Microsoft)",
+      "description": "Microsoft's live-response toolkit: Process Explorer, Autoruns (persistence), TCPView (connections), Procmon and more.",
+      "docs": "https://learn.microsoft.com/sysinternals/",
+      "install": {
+        "type": "archive",
+        "url": "https://download.sysinternals.com/files/SysinternalsSuite.zip",
+        "authenticode": ["procexp64.exe", "Autoruns64.exe", "tcpview64.exe", "Procmon64.exe"],
+        "signer": "Microsoft",
+        "entry": "procexp64.exe"
+      },
+      "status": { "processNames": ["procexp64.exe", "Autoruns64.exe", "tcpview64.exe", "Procmon64.exe"] },
+      "actions": [
+        { "label": "Process Explorer", "type": "gui", "path": "{DIR}\\procexp64.exe", "args": ["/accepteula"], "primary": true },
+        { "label": "Autoruns", "type": "gui", "path": "{DIR}\\Autoruns64.exe", "args": ["/accepteula"] },
+        { "label": "TCPView", "type": "gui", "path": "{DIR}\\tcpview64.exe", "args": ["/accepteula"] },
+        { "label": "Process Monitor", "type": "gui", "path": "{DIR}\\Procmon64.exe", "args": ["/accepteula"] },
+        { "label": "Open folder", "type": "folder", "path": "{DIR}" },
+        { "label": "Stop", "type": "kill", "processNames": ["procexp64.exe", "Autoruns64.exe", "tcpview64.exe", "Procmon64.exe", "Procmon.exe"], "stop": true }
+      ]
+    },
+    {
+      "id": "velociraptor",
+      "name": "Velociraptor",
+      "category": "dfir",
+      "version": "0.77.3",
+      "description": "Endpoint visibility and DFIR collection with VQL. 'gui' mode runs a single-machine server and client with a web UI.",
+      "docs": "https://docs.velociraptor.app/",
+      "install": {
+        "type": "archive",
+        "url": "https://github.com/Velocidex/velociraptor/releases/download/v0.77.3/velociraptor-v0.77.3-windows-amd64.exe.gz",
+        "sha256": "0b9cd957e5605da74994a6c29934da9af0e3af9c9b808f2274c826fba32dc3ae",
+        "entry": "velociraptor-v0.77.3-windows-amd64.exe"
+      },
+      "status": { "exePath": "{ENTRY}", "url": "https://127.0.0.1:8889" },
+      "actions": [
+        { "label": "Start (Admin)", "type": "terminal", "cwd": "{DIR}", "command": "& '{ENTRY}' gui --datastore '{DIR}\\datastore' --nobrowser", "admin": true, "primary": true },
+        { "label": "Open web UI", "type": "web", "url": "https://127.0.0.1:8889" },
+        { "label": "Stop", "type": "kill", "processNames": ["velociraptor-v0.77.3-windows-amd64.exe"], "stop": true }
+      ]
+    },
+
+    {
+      "id": "node24",
+      "name": "Node.js 24 (portable)",
+      "category": "soar",
+      "hidden": true,
+      "version": "24.22.2",
+      "description": "Private Node runtime for n8n, so the system Node 22 used by other projects is untouched.",
+      "install": {
+        "type": "archive",
+        "url": "https://nodejs.org/dist/v24.22.2/node-v24.22.2-win-x64.zip",
+        "sha256": "ca1bff5d8ead13c9f2ea404a176db46bd430704d5b5113734049fa365e7799e2",
+        "entry": "node.exe"
+      }
+    },
+    {
+      "id": "n8n",
+      "name": "n8n",
+      "category": "soar",
+      "version": "2.45.7",
+      "description": "The SOAR playbook engine: receives alerts by webhook, enriches them with threat intel, opens cases, asks for approval and runs responses.",
+      "docs": "https://docs.n8n.io/",
+      "install": { "type": "npm", "package": "n8n@2.45.7", "node": "node24" },
+      "detect": { "path": "{DIR}\\node_modules\\n8n\\bin\\n8n" },
+      "status": { "url": "http://localhost:5678" },
+      "actions": [
+        { "label": "Start", "type": "terminal", "cwd": "{DIR}", "command": "$env:N8N_USER_FOLDER = '{DIR}\\data'; $env:N8N_PORT = '5678'; $env:N8N_LISTEN_ADDRESS = '127.0.0.1'; $env:N8N_DIAGNOSTICS_ENABLED = 'false'; & '{ENTRY:node24}' '{DIR}\\node_modules\\n8n\\bin\\n8n' start", "primary": true },
+        { "label": "Open n8n", "type": "web", "url": "http://localhost:5678" },
+        { "label": "Stop", "type": "kill", "exePath": "{ENTRY:node24}", "stop": true }
+      ]
+    },
+    {
+      "id": "cyberchef",
+      "name": "CyberChef",
+      "category": "soar",
+      "version": "11.5.0",
+      "description": "GCHQ's offline 'cyber Swiss army knife' for decoding, deobfuscating and analysing data such as Base64 PowerShell, URLs and hashes. Served locally by this console.",
+      "docs": "https://github.com/gchq/CyberChef",
+      "install": {
+        "type": "archive",
+        "url": "https://github.com/gchq/CyberChef/releases/download/v11.5.0/CyberChef_8cd426dd4f40f1423912d5fad91b578a86a65112.zip",
+        "sha256": "f6478925d3eaa16ec08626a85f5b85eed10d531a5e18700615fed7ecb024cccf",
+        "entry": "CyberChef_*.html"
+      },
+      "actions": [
+        { "label": "Open CyberChef", "type": "web", "url": "/cyberchef/", "primary": true }
+      ]
+    },
+    {
+      "id": "soar-python",
+      "name": "SOAR Python toolkit",
+      "category": "soar",
+      "version": "latest (pip)",
+      "description": "Python libraries for playbooks and the mock alert generator: requests, vt-py (VirusTotal), python-dotenv (API keys from .env).",
+      "docs": "https://virustotal.github.io/vt-py/",
+      "install": { "type": "pip", "venv": "python", "packages": ["requests", "vt-py", "python-dotenv"] },
+      "detect": { "path": "{TOOLS}\\python\\Lib\\site-packages\\vt" },
+      "actions": [
+        { "label": "Open terminal", "type": "terminal", "cwd": "{REPO}\\soar", "command": "& '{TOOLS}\\python\\Scripts\\Activate.ps1'; python -c \"import requests, vt, dotenv; print('SOAR toolkit ready')\"", "primary": true }
+      ]
+    },
+
+    {
+      "id": "npcap",
+      "name": "Npcap",
+      "category": "net",
+      "version": "1.90",
+      "description": "Packet capture driver required by Wireshark and Suricata. The free edition only installs interactively, so you click through its installer.",
+      "docs": "https://npcap.com/guide/",
+      "install": {
+        "type": "installer",
+        "admin": true,
+        "url": "https://npcap.com/dist/npcap-1.90.exe",
+        "signer": "Nmap Software LLC",
+        "interactive": true
+      },
+      "detect": { "service": "npcap" },
+      "status": { "service": "npcap" },
+      "actions": []
+    },
+    {
+      "id": "wireshark",
+      "name": "Wireshark",
+      "category": "net",
+      "version": "4.6.9",
+      "description": "Packet capture and protocol analysis.",
+      "docs": "https://www.wireshark.org/docs/",
+      "install": { "type": "winget", "admin": true, "package": "WiresharkFoundation.Wireshark", "version": "4.6.9" },
+      "detect": { "path": "{PF}\\Wireshark\\Wireshark.exe" },
+      "status": { "processName": "Wireshark.exe" },
+      "actions": [
+        { "label": "Open Wireshark", "type": "gui", "path": "{PF}\\Wireshark\\Wireshark.exe", "primary": true },
+        { "label": "Stop", "type": "kill", "processNames": ["Wireshark.exe", "dumpcap.exe"], "stop": true }
+      ]
+    },
+    {
+      "id": "suricata",
+      "name": "Suricata IDS",
+      "category": "net",
+      "version": "7.0.10 + ET Open rules",
+      "description": "Network intrusion detection with the Emerging Threats Open rule set. Alerts go to eve.json, which Splunk collects into the 'suricata' index.",
+      "docs": "https://docs.suricata.io/",
+      "install": {
+        "type": "winget",
+        "admin": true,
+        "package": "OISF.Suricata",
+        "version": "7.0.10",
+        "rulesUrl": "https://rules.emergingthreats.net/open/suricata-7.0.10/emerging.rules.tar.gz"
+      },
+      "detect": { "path": "{PF}\\Suricata\\suricata.exe" },
+      "status": { "processName": "suricata.exe" },
+      "actions": [
+        { "label": "Start (Admin)", "type": "terminal", "cwd": "{PF}\\Suricata", "command": "$ip = (Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } | Select-Object -First 1).IPv4Address.IPAddress; Write-Host \"Sniffing on $ip (Ctrl+C to stop)\" -ForegroundColor Cyan; & '{PF}\\Suricata\\suricata.exe' -c '{PF}\\Suricata\\suricata.yaml' -i $ip", "admin": true, "primary": true },
+        { "label": "Stop", "type": "kill", "processNames": ["suricata.exe"], "stop": true },
+        { "label": "Open logs folder", "type": "folder", "path": "{PF}\\Suricata\\log" }
+      ]
+    }
+  ]
+}
