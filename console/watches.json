@@ -49,13 +49,24 @@
       "title": "Encoded PowerShell command",
       "attack": "T1059.001",
       "severity": "high",
-      "kql": "winlog.channel : \"Microsoft-Windows-Sysmon/Operational\" and event.code : \"1\" and process.command_line : (* -enc* or *-EncodedCommand*) and not process.parent.executable : *node.exe",
+      "$comment": "PowerShell processes only (powershell.exe / pwsh.exe). Matches every abbreviation of -EncodedCommand that PowerShell accepts (-e, -ec, -en..., -encodedcommand) with '-' or '/'. Excludes only the ShieldPulse console's own helpers (parent node.exe). AI-agent and other automation is deliberately NOT excluded.",
+      "kql": "winlog.channel : \"Microsoft-Windows-Sysmon/Operational\" and event.code : \"1\" and process.executable : (*\\\\powershell.exe or *\\\\pwsh.exe) and process.command_line : (* -e * or * -ec * or * -en* or * /e * or * /ec * or * /en*) and not process.parent.executable : *\\\\node.exe",
       "query": { "bool": {
-        "filter": [ { "term": { "winlog.channel": "Microsoft-Windows-Sysmon/Operational" } }, { "term": { "event.code": "1" } } ],
+        "filter": [
+          { "term": { "winlog.channel": "Microsoft-Windows-Sysmon/Operational" } },
+          { "term": { "event.code": "1" } },
+          { "bool": { "should": [
+            { "wildcard": { "process.executable": { "value": "*\\powershell.exe", "case_insensitive": true } } },
+            { "wildcard": { "process.executable": { "value": "*\\pwsh.exe", "case_insensitive": true } } }
+          ], "minimum_should_match": 1 } }
+        ],
         "should": [
-          { "wildcard": { "process.command_line": { "value": "* -enc *", "case_insensitive": true } } },
-          { "wildcard": { "process.command_line": { "value": "* -encodedcommand *", "case_insensitive": true } } },
-          { "wildcard": { "process.command_line": { "value": "* -e *", "case_insensitive": true } } }
+          { "wildcard": { "process.command_line": { "value": "* -e *", "case_insensitive": true } } },
+          { "wildcard": { "process.command_line": { "value": "* -ec *", "case_insensitive": true } } },
+          { "wildcard": { "process.command_line": { "value": "* -en*", "case_insensitive": true } } },
+          { "wildcard": { "process.command_line": { "value": "* /e *", "case_insensitive": true } } },
+          { "wildcard": { "process.command_line": { "value": "* /ec *", "case_insensitive": true } } },
+          { "wildcard": { "process.command_line": { "value": "* /en*", "case_insensitive": true } } }
         ],
         "minimum_should_match": 1,
         "must_not": [ { "wildcard": { "process.parent.executable": { "value": "*\\node.exe", "case_insensitive": true } } } ]
