@@ -3,7 +3,8 @@
  * Live data connectors for the console. Each source is refreshed in the background on its own
  * interval and cached, so page polls are instant and the lab tools are not hammered:
  *
- *   splunk   - REST API on 127.0.0.1:8089: health, events per index, 24h watchlist counts
+ *   siem     - Elastic: Elasticsearch REST API on 127.0.0.1:9200 (health, events per log source,
+ *              24h watchlist counts) and a Kibana reachability check on 127.0.0.1:5601
  *   suricata - tail of eve.json: latest IDS alerts
  *   n8n      - REST API on 127.0.0.1:5678: health, workflows, recent executions
  *
@@ -12,33 +13,44 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
-const https = require('https');
 const secrets = require('./secrets');
 
-const SPLUNK = { host: '127.0.0.1', port: 8089, web: 'http://localhost:8000' };
+const ES = { host: '127.0.0.1', port: 9200 };
+const KIBANA = { host: '127.0.0.1', port: 5601, web: 'http://localhost:5601' };
 const N8N = { host: '127.0.0.1', port: 5678, web: 'http://localhost:5678' };
 const EVE_FILE = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Suricata', 'log', 'eve.json');
 const WATCHES_FILE = path.join(__dirname, 'watches.json');
-const INDEXES = ['wineventlog', 'sysmon', 'powershell', 'defender', 'suricata'];
+const EVENT_INDICES = 'winlogbeat-*,filebeat-*';
 
-const TTL = { splunk: 90000, suricata: 10000, n8n: 20000 };
+// Log sources shown under "Ingestion" (Winlogbeat channels + Filebeat Suricata module).
+const SOURCES = [
+  { source: 'security',   label: 'Windows Security',  kql: 'winlog.channel : "Security"',
+    query: { term: { 'winlog.channel': 'Security' } } },
+  { source: 'system',     label: 'Windows System',    kql: 'winlog.channel : "System"',
+    query: { term: { 'winlog.channel': 'System' } } },
+  { source: 'sysmon',     label: 'Sysmon',            kql: 'winlog.channel : "Microsoft-Windows-Sysmon/Operational"',
+    query: { term: { 'winlog.channel': 'Microsoft-Windows-Sysmon/Operational' } } },
+  { source: 'powershell', label: 'PowerShell',        kql: 'winlog.channel : ("Microsoft-Windows-PowerShell/Operational" or "Windows PowerShell")',
+    query: { terms: { 'winlog.channel': ['Microsoft-Windows-PowerShell/Operational', 'Windows PowerShell'] } } },
+  { source: 'defender',   label: 'Defender',          kql: 'winlog.channel : "Microsoft-Windows-Windows Defender/Operational"',
+    query: { term: { 'winlog.channel': 'Microsoft-Windows-Windows Defender/Operational' } } },
+  { source: 'suricata',   label: 'Suricata IDS',      kql: 'event.module : "suricata"',
+    query: { term: { 'event.module': 'suricata' } } },
+];
+
+const TTL = { siem: 30000, suricata: 10000, n8n: 20000 };
 const cache = {
-  splunk: { at: 0, busy: null, data: { state: 'loading' } },
+  siem: { at: 0, busy: null, data: { state: 'loading' } },
   suricata: { at: 0, busy: null, data: { state: 'loading' } },
   n8n: { at: 0, busy: null, data: { state: 'loading' } },
 };
 
 // ---------------------------------------------------------------------------
-// HTTP helper (loopback only)
+// HTTP helper (loopback only, plain HTTP: these services listen on 127.0.0.1)
 
-function request({ secure, host, port, method = 'GET', pathname, headers = {}, body = null, timeout = 15000 }) {
+function request({ host, port, method = 'GET', pathname, headers = {}, body = null, timeout = 15000 }) {
   return new Promise((resolve, reject) => {
-    const lib = secure ? https : http;
-    const req = lib.request({
-      host, port, method, path: pathname, headers, timeout,
-      // Lab services on 127.0.0.1 use self-signed certificates (Splunk management port).
-      ...(secure ? { rejectUnauthorized: false } : {}),
-    }, (res) => {
+    const req = http.request({ host, port, method, path: pathname, headers, timeout }, (res) => {
       let data = '';
       res.setEncoding('utf8');
       res.on('data', (c) => { data += c; });
@@ -54,108 +66,122 @@ function request({ secure, host, port, method = 'GET', pathname, headers = {}, b
 const offline = (err) => ['ECONNREFUSED', 'ECONNRESET', 'EHOSTUNREACH'].includes(err.code) || /timed out/.test(err.message);
 
 // ---------------------------------------------------------------------------
-// Splunk
+// Elastic (Elasticsearch + Kibana)
 
-function splunkAuth(creds) {
-  return 'Basic ' + Buffer.from(`${creds.username}:${creds.password}`, 'utf8').toString('base64');
-}
+const basic = (creds) => 'Basic ' + Buffer.from(`${creds.username}:${creds.password}`, 'utf8').toString('base64');
 
-async function splunkGet(creds, pathname) {
-  const r = await request({ secure: true, ...SPLUNK, pathname, headers: { Authorization: splunkAuth(creds) } });
-  if (r.status === 401) throw Object.assign(new Error('Splunk rejected the saved login'), { auth: true });
-  if (r.status >= 400) throw new Error(`Splunk returned HTTP ${r.status}`);
+async function es(creds, method, pathname, payload = null, timeout = 30000) {
+  const body = payload ? JSON.stringify(payload) : null;
+  const r = await request({
+    ...ES, method, pathname, timeout, body,
+    headers: { Authorization: basic(creds), ...(body ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } : {}) },
+  });
+  if (r.status === 401) throw Object.assign(new Error('Elasticsearch rejected the saved login'), { auth: true });
+  if (r.status >= 400) {
+    let reason = `HTTP ${r.status}`;
+    try { reason = JSON.parse(r.body).error.reason || reason; } catch { /* keep status */ }
+    throw new Error(`Elasticsearch: ${reason}`);
+  }
   return JSON.parse(r.body);
 }
 
-/** Runs a search to completion (export endpoint) and returns result rows. */
-async function splunkSearch(creds, spl, timeout = 90000) {
-  const body = new URLSearchParams({ search: spl, output_mode: 'json' }).toString();
-  const r = await request({
-    secure: true, ...SPLUNK, method: 'POST', pathname: '/services/search/jobs/export', timeout, body,
-    headers: { Authorization: splunkAuth(creds), 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) },
-  });
-  if (r.status === 401) throw Object.assign(new Error('Splunk rejected the saved login'), { auth: true });
-  if (r.status >= 400) throw new Error(`Splunk search failed (HTTP ${r.status})`);
-  return r.body.split('\n').filter(Boolean).map((line) => {
-    try { return JSON.parse(line); } catch { return null; }
-  }).filter((o) => o && o.result && o.preview === false).map((o) => o.result);
-}
-
-/** Checks a username/password against Splunk without storing it. */
-async function testSplunk(creds) {
-  const info = await splunkGet(creds, '/services/server/info?output_mode=json');
-  return info.entry[0].content.version;
+/** Checks a username/password against Elasticsearch without storing it. Returns the version. */
+async function testElastic(creds) {
+  const info = await es(creds, 'GET', '/');
+  return info.version.number;
 }
 
 function loadWatches() {
   try { return JSON.parse(fs.readFileSync(WATCHES_FILE, 'utf8')).watches || []; } catch { return []; }
 }
 
-const splunkLink = (spl, earliest = '-24h') =>
-  `${SPLUNK.web}/en-US/app/search/search?${new URLSearchParams({ q: `search ${spl}`, earliest, latest: 'now' })}`;
+/** Kibana Discover link for a KQL query over the last 24 hours (rison-encoded app state). */
+function discoverLink(kql, from = 'now-24h') {
+  const rison = (s) => `'${String(s).replace(/!/g, '!!').replace(/'/g, "!'")}'`;
+  const a = `(query:(language:kuery,query:${rison(kql)}))`;
+  const g = `(time:(from:${from},to:now))`;
+  return `${KIBANA.web}/app/discover#/?_g=${encodeURIComponent(g)}&_a=${encodeURIComponent(a)}`;
+}
 
-async function refreshSplunk() {
-  // Reachability first, so a stopped Splunk reads "Not running" rather than "Needs connection".
+async function kibanaUp() {
+  try { const r = await request({ ...KIBANA, pathname: '/api/status', timeout: 4000 }); return r.status === 200 || r.status === 401; } catch { return false; }
+}
+
+async function refreshSiem() {
+  // Reachability first, so a stopped Elasticsearch reads "Not running" rather than "Needs connection".
   try {
-    await request({ secure: true, ...SPLUNK, pathname: '/services/server/info', timeout: 5000 });
-  } catch (e) {
-    return { state: 'offline', message: 'Splunk is not running. Start it from the Splunk page.' };
+    await request({ ...ES, pathname: '/', timeout: 5000 });
+  } catch {
+    return { state: 'offline', name: 'Elastic', message: 'Elasticsearch is not running. Start it from its page in the console.' };
   }
 
   let creds;
-  try { creds = await secrets.load('splunk'); } catch (e) { return { state: 'error', message: e.message }; }
-  if (!creds) return { state: 'needs-credentials', message: 'Splunk is running. Add your Splunk login under Connections.' };
+  try { creds = await secrets.load('elastic'); } catch (e) { return { state: 'error', name: 'Elastic', message: e.message }; }
+  if (!creds) return { state: 'needs-credentials', name: 'Elastic', message: 'Elasticsearch is running. Add the elastic login under Connections.' };
 
   try {
-    const [info, health] = await Promise.all([
-      splunkGet(creds, '/services/server/info?output_mode=json'),
-      splunkGet(creds, '/services/server/health/splunkd?output_mode=json').catch(() => null),
+    const [info, health, kibana] = await Promise.all([
+      es(creds, 'GET', '/'),
+      es(creds, 'GET', '/_cluster/health'),
+      kibanaUp(),
     ]);
-    const content = info.entry[0].content;
+    const search = `/${EVENT_INDICES}/_search?ignore_unavailable=true&allow_no_indices=true&request_cache=false`;
+    const last24h = { range: { '@timestamp': { gte: 'now-24h' } } };
 
-    const list = INDEXES.join(',');
-    const ingestionRows = await splunkSearch(creds,
-      `| tstats count max(_time) as last where index IN (${list}) earliest=-24h by index ` +
-      `| append [| tstats count as recent where index IN (${list}) earliest=-15m by index] ` +
-      '| stats sum(count) as count sum(recent) as recent max(last) as last by index');
-    const byIndex = new Map(ingestionRows.map((r) => [r.index, r]));
-    const ingestion = INDEXES.map((index) => {
-      const r = byIndex.get(index) || {};
+    // Ingestion: one request for every source.
+    const ing = await es(creds, 'POST', search, {
+      size: 0, track_total_hits: true, query: last24h,
+      aggs: {
+        sources: {
+          filters: { filters: Object.fromEntries(SOURCES.map((s) => [s.source, s.query])) },
+          aggs: {
+            last: { max: { field: '@timestamp' } },
+            recent: { filter: { range: { '@timestamp': { gte: 'now-15m' } } } },
+          },
+        },
+      },
+    });
+    const buckets = (ing.aggregations && ing.aggregations.sources.buckets) || {};
+    const ingestion = SOURCES.map((s) => {
+      const b = buckets[s.source] || {};
       return {
-        index,
-        count24h: Number(r.count || 0),
-        count15m: Number(r.recent || 0),
-        lastEvent: r.last ? Number(r.last) * 1000 : null,
-        link: splunkLink(`index=${index}`, '-15m'),
+        source: s.source, label: s.label,
+        count24h: b.doc_count || 0,
+        count15m: (b.recent && b.recent.doc_count) || 0,
+        lastEvent: b.last && b.last.value ? b.last.value : null,
+        link: discoverLink(s.kql, 'now-15m'),
       };
     });
 
-    // Watchlist: run sequentially to keep load low on an 8 GB machine.
-    const watches = [];
-    for (const w of loadWatches()) {
-      try {
-        const rows = await splunkSearch(creds, `search ${w.spl} earliest=-24h | stats count max(_time) as last`);
-        const row = rows[0] || {};
-        watches.push({ ...w, count: Number(row.count || 0), last: row.last ? Number(row.last) * 1000 : null, link: splunkLink(w.spl) });
-      } catch (e) {
-        if (e.auth) throw e;
-        watches.push({ ...w, count: null, error: e.message, link: splunkLink(w.spl) });
-      }
-    }
+    // Watchlist: one request for every watch.
+    const watchDefs = loadWatches();
+    const wr = await es(creds, 'POST', search, {
+      size: 0, query: last24h,
+      aggs: {
+        watches: {
+          filters: { filters: Object.fromEntries(watchDefs.map((w) => [w.id, w.query])) },
+          aggs: { last: { max: { field: '@timestamp' } } },
+        },
+      },
+    });
+    const wb = (wr.aggregations && wr.aggregations.watches.buckets) || {};
+    const watches = watchDefs.map(({ query, ...w }) => {
+      const b = wb[w.id] || {};
+      return { ...w, count: b.doc_count || 0, last: b.last && b.last.value ? b.last.value : null, link: discoverLink(w.kql) };
+    });
 
     return {
-      state: 'connected',
-      version: content.version,
-      license: content.activeLicenseGroup,
-      health: health ? health.entry[0].content.health : 'unknown',
-      ingestion,
-      watches,
-      web: SPLUNK.web,
+      state: 'connected', name: 'Elastic',
+      version: info.version.number,
+      health: health.status,
+      kibana,
+      ingestion, watches,
+      web: KIBANA.web,
     };
   } catch (e) {
-    if (e.auth) return { state: 'needs-credentials', message: 'Splunk rejected the saved login. Update it under Connections.' };
-    if (offline(e)) return { state: 'offline', message: 'Splunk is not running.' };
-    return { state: 'error', message: e.message };
+    if (e.auth) return { state: 'needs-credentials', name: 'Elastic', message: 'Elasticsearch rejected the saved login. Update it under Connections.' };
+    if (offline(e)) return { state: 'offline', name: 'Elastic', message: 'Elasticsearch is not running.' };
+    return { state: 'error', name: 'Elastic', message: e.message };
   }
 }
 
@@ -249,7 +275,7 @@ async function refreshN8n() {
 // ---------------------------------------------------------------------------
 // Cache and public API
 
-const refreshers = { splunk: refreshSplunk, suricata: refreshSuricata, n8n: refreshN8n };
+const refreshers = { siem: refreshSiem, suricata: refreshSuricata, n8n: refreshN8n };
 
 function refresh(source, force = false) {
   const c = cache[source];
@@ -271,8 +297,8 @@ function getLive() {
 }
 
 function invalidate(source) {
-  if (cache[source]) cache[source].at = 0;
-  refresh(source, true);
+  const key = source === 'elastic' ? 'siem' : source;
+  if (cache[key]) { cache[key].at = 0; refresh(key, true); }
 }
 
-module.exports = { getLive, invalidate, testSplunk, testN8n };
+module.exports = { getLive, invalidate, testElastic, testN8n, SOURCES };

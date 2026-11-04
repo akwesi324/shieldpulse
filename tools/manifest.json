@@ -9,25 +9,75 @@
   ],
   "tools": [
     {
-      "id": "splunk",
-      "name": "Splunk Enterprise",
+      "id": "elasticsearch",
+      "name": "Elasticsearch",
       "category": "siem",
-      "version": "10.6.1.1",
-      "description": "The SIEM. Collects Windows, Sysmon, PowerShell, Defender and Suricata logs into separate indexes for searching, detections and dashboards.",
-      "docs": "https://docs.splunk.com/Documentation/Splunk",
-      "install": { "type": "external", "script": "siem\\splunk\\install-splunk.ps1", "admin": true },
-      "detect": { "service": "Splunkd" },
-      "status": { "service": "Splunkd", "url": "http://localhost:8000" },
+      "version": "9.5.6",
+      "description": "The SIEM data store and search engine (Elastic, free for production use). Holds Windows, Sysmon, PowerShell, Defender and Suricata events in ECS format. Listens on 127.0.0.1 only, with a 1 GB heap.",
+      "docs": "https://www.elastic.co/docs/reference/elasticsearch",
+      "install": { "type": "external", "script": "siem\\elastic\\install-elastic.ps1", "admin": true },
+      "detect": { "service": "elasticsearch-service-x64" },
+      "status": { "service": "elasticsearch-service-x64" },
       "actions": [
-        { "label": "Open Splunk Web", "type": "web", "url": "http://localhost:8000", "primary": true },
-        { "label": "Verify ingestion", "type": "terminal", "cwd": "{REPO}", "command": "& .\\siem\\splunk\\verify-splunk.ps1" },
-        { "label": "Start", "type": "service", "service": "Splunkd", "op": "start" },
-        { "label": "Stop", "type": "service", "service": "Splunkd", "op": "stop", "stop": true }
+        { "label": "Start", "type": "service", "service": "elasticsearch-service-x64", "op": "start", "primary": true },
+        { "label": "Verify ingestion", "type": "terminal", "cwd": "{REPO}", "command": "& .\\siem\\elastic\\verify-elastic.ps1" },
+        { "label": "Logs folder", "type": "folder", "path": "C:\\ProgramData\\Elastic\\elasticsearch\\logs" },
+        { "label": "Stop", "type": "service", "service": "elasticsearch-service-x64", "op": "stop", "stop": true }
+      ]
+    },
+    {
+      "id": "kibana",
+      "name": "Kibana (Elastic Security)",
+      "category": "siem",
+      "version": "9.5.6",
+      "description": "The SIEM interface: Discover for searching events, Elastic Security for detection rules, alerts, timelines and cases, and the Winlogbeat dashboards. Runs on demand at 127.0.0.1:5601 (about 1 GB of RAM).",
+      "docs": "https://www.elastic.co/docs/solutions/security",
+      "install": { "type": "external", "script": "siem\\elastic\\install-elastic.ps1", "admin": true },
+      "detect": { "path": "{PF}\\Elastic\\kibana\\bin\\kibana.bat" },
+      "status": { "url": "http://localhost:5601/api/status" },
+      "actions": [
+        { "label": "Start Kibana", "type": "background", "path": "{PF}\\Elastic\\kibana\\bin\\kibana.bat", "primary": true },
+        { "label": "Open Kibana", "type": "web", "url": "http://localhost:5601" },
+        { "label": "Open Discover", "type": "web", "url": "http://localhost:5601/app/discover" },
+        { "label": "Open Security", "type": "web", "url": "http://localhost:5601/app/security" },
+        { "label": "Stop", "type": "kill", "exePathPrefix": "{PF}\\Elastic\\kibana\\", "stop": true }
       ],
       "examples": [
-        "index=sysmon EventCode=1 NOT Image=\"C:\\\\Program Files\\\\Splunk\\\\*\" | table _time Image CommandLine ParentImage",
-        "index=wineventlog EventCode=4625 | stats count by Account_Name, Source_Network_Address",
-        "index=suricata event_type=alert | stats count by alert.signature"
+        "winlog.channel : \"Microsoft-Windows-Sysmon/Operational\" and event.code : \"1\" and not process.executable : *Elastic*",
+        "winlog.channel : \"Security\" and event.code : \"4625\"",
+        "event.module : \"suricata\" and event.kind : \"alert\""
+      ]
+    },
+    {
+      "id": "winlogbeat",
+      "name": "Winlogbeat",
+      "category": "siem",
+      "version": "9.5.6",
+      "description": "Ships the Security, System, Sysmon, PowerShell and Defender event logs to Elasticsearch, using a write-only API key.",
+      "docs": "https://www.elastic.co/docs/reference/beats/winlogbeat",
+      "install": { "type": "external", "script": "siem\\elastic\\install-elastic.ps1", "admin": true },
+      "detect": { "service": "winlogbeat" },
+      "status": { "service": "winlogbeat" },
+      "actions": [
+        { "label": "Start", "type": "service", "service": "winlogbeat", "op": "start", "primary": true },
+        { "label": "Logs folder", "type": "folder", "path": "C:\\ProgramData\\Elastic\\winlogbeat\\logs" },
+        { "label": "Stop", "type": "service", "service": "winlogbeat", "op": "stop", "stop": true }
+      ]
+    },
+    {
+      "id": "filebeat",
+      "name": "Filebeat (Suricata)",
+      "category": "siem",
+      "version": "9.5.6",
+      "description": "Ships Suricata's eve.json (alerts, flows, DNS, TLS) to Elasticsearch through the suricata module, using a write-only API key.",
+      "docs": "https://www.elastic.co/docs/reference/beats/filebeat/filebeat-module-suricata",
+      "install": { "type": "external", "script": "siem\\elastic\\install-elastic.ps1", "admin": true },
+      "detect": { "service": "filebeat" },
+      "status": { "service": "filebeat" },
+      "actions": [
+        { "label": "Start", "type": "service", "service": "filebeat", "op": "start", "primary": true },
+        { "label": "Logs folder", "type": "folder", "path": "C:\\ProgramData\\Elastic\\filebeat\\logs" },
+        { "label": "Stop", "type": "service", "service": "filebeat", "op": "stop", "stop": true }
       ]
     },
     {
@@ -63,7 +113,7 @@
       "version": "latest (pip)",
       "description": "Converts vendor-neutral Sigma detection rules into Splunk SPL. Used to build the lab's detections.",
       "docs": "https://github.com/SigmaHQ/sigma-cli",
-      "install": { "type": "pip", "venv": "python", "packages": ["sigma-cli", "pysigma-backend-splunk", "pysigma-pipeline-sysmon", "pysigma-pipeline-windows"], "entry": "Scripts\\sigma.exe" },
+      "install": { "type": "pip", "venv": "python", "packages": ["sigma-cli", "pysigma-backend-elasticsearch", "pysigma-backend-splunk", "pysigma-pipeline-sysmon", "pysigma-pipeline-windows"], "entry": "Scripts\\sigma.exe" },
       "detect": { "path": "{TOOLS}\\python\\Scripts\\sigma.exe" },
       "actions": [
         { "label": "Open terminal", "type": "terminal", "cwd": "{REPO}", "command": "& '{TOOLS}\\python\\Scripts\\Activate.ps1'; sigma version; sigma list targets", "primary": true }

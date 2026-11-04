@@ -1,6 +1,6 @@
-# Security Labs for Android
+# ShieldPulse for Android
 
-A **read-only** Android app for viewing your lab from your phone while it's on the same Wi-Fi as your PC. It shows live Splunk ingestion, watchlist hits, Suricata IDS alerts, n8n playbook runs, PC memory, and the status of every lab tool.
+A **read-only** Android app for viewing your lab from your phone while it's on the same Wi-Fi as your PC. It shows live Elastic SIEM ingestion, watchlist hits, Suricata IDS alerts, n8n playbook runs, PC memory, and the status of every lab tool.
 
 The app can't start or stop tools, or change any settings. Those controls stay in the console on your PC.
 

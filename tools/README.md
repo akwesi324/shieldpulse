@@ -32,9 +32,10 @@ If a check fails, the file is deleted and that tool is skipped.
 
 | Area | Tool | Version | Purpose |
 |---|---|---|---|
-| SIEM | Splunk Enterprise | 10.6.1.1 | Log collection, search, detections (installed by `siem\splunk\install-splunk.ps1`) |
+| SIEM | Elasticsearch + Kibana (Elastic Security) | 9.5.6 | Event storage, search, detection rules, dashboards (installed by `siem\elastic\install-elastic.ps1`) |
+| SIEM | Winlogbeat + Filebeat | 9.5.6 | Ship Windows event logs and Suricata `eve.json` to Elasticsearch with write-only API keys |
 | SIEM | Sysmon | Sysinternals | Endpoint telemetry (installed by `siem\setup.ps1`) |
-| Detection & Hunting | Sigma CLI | pip | Convert Sigma rules to SPL |
+| Detection & Hunting | Sigma CLI | pip | Convert Sigma rules to Elasticsearch (Lucene or ES\|QL) or SPL |
 | Detection & Hunting | SigmaHQ rules | r2026-07-01 | 3,000+ community detection rules |
 | Detection & Hunting | Hayabusa | 4.3.1 | Event log hunting and timelines with Sigma |
 | Detection & Hunting | Chainsaw | 2.17.1 | Fast event log search and Sigma hunting |
@@ -48,7 +49,7 @@ If a check fails, the file is deleted and that tool is skipped.
 | SOAR & Threat Intel | SOAR Python toolkit | pip | requests, vt-py, python-dotenv |
 | Network Monitoring | Npcap | 1.90 | Packet capture driver |
 | Network Monitoring | Wireshark | 4.6.9 | Packet analysis |
-| Network Monitoring | Suricata + ET Open | 7.0.10 | Network IDS; alerts go to Splunk's `suricata` index |
+| Network Monitoring | Suricata + ET Open | 7.0.10 | Network IDS; Filebeat ships alerts to Elasticsearch (`event.module: suricata`) |
 
 ## Adding a tool
 

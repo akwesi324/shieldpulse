@@ -178,7 +178,7 @@ function overview() {
           h('button', { type: 'button', onclick: () => select(t.id) },
             h('i', { class: `dot ${statusOf(t).cls}` }), t.name, h('span', { class: 'ver' }, statusOf(t).label))))));
     })),
-    h('p', { class: 'tip' }, 'Press ', h('kbd', {}, '['), ' to collapse or expand the tools pane. Run one heavy service at a time (Splunk, n8n, Velociraptor, Suricata) to stay within 8 GB of RAM.'));
+    h('p', { class: 'tip' }, 'Press ', h('kbd', {}, '['), ' to collapse or expand the tools pane. Run one heavy service at a time (Elastic, n8n, Velociraptor, Suricata) to stay within 8 GB of RAM.'));
 }
 
 function stat(num, label) {
@@ -307,7 +307,7 @@ function sectionHead(title, data) {
 
 function liveOverview() {
   if (!liveData) return h('p', { class: 'tip' }, 'Loading live data...');
-  const s = liveData.splunk || {};
+  const s = liveData.siem || {};
   const r = liveData.suricata || {};
   const n = liveData.n8n || {};
   const events24h = s.ingestion ? s.ingestion.reduce((a, b) => a + b.count24h, 0) : null;
@@ -316,13 +316,13 @@ function liveOverview() {
   return h('div', {},
     h('div', { class: 'section-head' }, h('h2', {}, 'Live'), h('span', { class: 'live-badge' }, h('i', {}), 'auto-refresh')),
     h('div', { class: 'live-cards' },
-      liveCard('Splunk', s, s.state === 'connected'
-        ? [`${fmt(events24h)} events / 24 h`, `health: ${s.health}`]
+      liveCard('Elastic SIEM', s, s.state === 'connected'
+        ? [`${fmt(events24h)} events / 24 h`, `health: ${s.health}${s.kibana ? ' · Kibana up' : ' · Kibana stopped'}`]
         : [s.message || '']),
       liveCard('Watchlist', s, s.state === 'connected'
         ? [hits.length ? `${hits.length} of ${s.watches.length} watches triggered` : 'No watch triggered in 24 h',
           hits.length ? hits.map((w) => w.title).slice(0, 2).join(', ') : 'all quiet']
-        : ['Needs Splunk']),
+        : ['Needs Elastic']),
       liveCard('Suricata IDS', r, r.state === 'connected'
         ? [`${r.alerts.length} recent alert${r.alerts.length === 1 ? '' : 's'}`, `last event ${ago(r.lastEvent)}`]
         : [r.message || '']),
@@ -341,24 +341,25 @@ function liveCard(title, data, lines) {
 
 function livePanelFor(toolId) {
   if (!liveData) return null;
-  if (toolId === 'splunk') return splunkPanel(liveData.splunk);
+  if (toolId === 'elasticsearch' || toolId === 'kibana' || toolId === 'winlogbeat' || toolId === 'filebeat') return siemPanel(liveData.siem);
   if (toolId === 'suricata') return suricataPanel(liveData.suricata);
   if (toolId === 'n8n') return n8nPanel(liveData.n8n);
   return null;
 }
 
-function splunkPanel(s) {
+function siemPanel(s) {
   if (!s || s.state !== 'connected') return [sectionHead('Live data', s), notice(s, true)];
   return [
     sectionHead('Ingestion', s),
+    h('p', { class: 'tip' }, `Elasticsearch ${s.version} · cluster health ${s.health} · Kibana ${s.kibana ? 'running' : 'stopped'}`),
     h('div', { class: 'card table-card' }, h('table', {},
-      h('thead', {}, h('tr', {}, h('th', {}, 'Index'), h('th', { class: 'num' }, 'Last 15 min'), h('th', { class: 'num' }, 'Last 24 h'), h('th', {}, 'Latest event'), h('th', {}, ''))),
+      h('thead', {}, h('tr', {}, h('th', {}, 'Log source'), h('th', { class: 'num' }, 'Last 15 min'), h('th', { class: 'num' }, 'Last 24 h'), h('th', {}, 'Latest event'), h('th', {}, ''))),
       h('tbody', {}, s.ingestion.map((i) => h('tr', {},
-        h('td', {}, h('i', { class: `dot ${i.count15m > 0 ? 'running' : i.count24h > 0 ? 'ready' : 'missing'}` }), ' ', i.index),
+        h('td', {}, h('i', { class: `dot ${i.count15m > 0 ? 'running' : i.count24h > 0 ? 'ready' : 'missing'}` }), ' ', i.label),
         h('td', { class: 'num' }, fmt(i.count15m)),
         h('td', { class: 'num' }, fmt(i.count24h)),
         h('td', {}, ago(i.lastEvent)),
-        h('td', {}, h('a', { href: i.link, target: '_blank', rel: 'noopener noreferrer' }, 'Search'))))))),
+        h('td', {}, h('a', { href: i.link, target: '_blank', rel: 'noopener noreferrer' }, 'Open in Kibana'))))))),
     watchlistPanel(s, false),
   ];
 }
@@ -371,7 +372,7 @@ function watchlistPanel(s, compact) {
     rows.length
       ? h('div', { class: 'watch-list' }, rows.map((w) => h('a', {
         class: `card watch${w.count > 0 ? ' hit' : ''}`, href: w.link, target: '_blank', rel: 'noopener noreferrer',
-        title: `Open in Splunk: ${w.spl}`,
+        title: `Open in Kibana: ${w.kql}`,
       },
       h('span', { class: `sev ${w.severity}` }, w.severity),
       h('span', { class: 'watch-title' }, w.title, w.attack ? h('span', { class: 'attack' }, w.attack) : null),
@@ -432,8 +433,8 @@ function connectionsView() {
     h('h1', {}, 'Connections'),
     h('p', { class: 'lead' }, 'Credentials the console uses to read live data from your lab tools. They are checked against the running service, then encrypted with Windows DPAPI so only your Windows account can decrypt them. They are never sent back to the browser.'),
 
-    connectionCard('splunk', c.splunk, 'Splunk', 'The admin login you chose when installing Splunk. Used for health, ingestion counts and the watchlist.', [
-      { name: 'username', label: 'Username', type: 'text', value: 'admin', autocomplete: 'username' },
+    connectionCard('elastic', c.elastic, 'Elastic', "The 'elastic' login you chose when running siem\\elastic\\install-elastic.ps1. Used for cluster health, ingestion counts and the watchlist.", [
+      { name: 'username', label: 'Username', type: 'text', value: 'elastic', autocomplete: 'username' },
       { name: 'password', label: 'Password', type: 'password', autocomplete: 'current-password' },
     ]),
     connectionCard('n8n', c.n8n, 'n8n', 'Start n8n, open it, then go to Settings > n8n API > Create an API key and paste it here. Used for workflows and executions.', [

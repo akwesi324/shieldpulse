@@ -1,16 +1,46 @@
 # SIEM lab
 
-Splunk Enterprise (Free license) runs directly on Windows and collects logs from the same machine. There are no VMs and no Docker.
+The SIEM is **Elastic**: Elasticsearch and Kibana (Elastic Security), with Winlogbeat and Filebeat, installed natively on Windows and listening on 127.0.0.1 only. Elastic's free tier allows production use. Splunk was the previous SIEM; its setup is kept further down for reference.
 
 ```
  This PC
- ┌──────────────────────────────────────────────────────┐
- │  Sysmon ─┐                                           │
- │  Security log (audit policy) ─┼─► Windows Event Logs ─► Splunk ─► Detections / Dashboards
- │  PowerShell logging ─┘                               │
- │  Defender ─┘                                         │
- └──────────────────────────────────────────────────────┘
+ ┌──────────────────────────────────────────────────────────────────────────────┐
+ │  Sysmon, Security (audit policy), PowerShell, Defender ─► Winlogbeat ─┐       │
+ │  Suricata eve.json ─────────────────────────────────────► Filebeat ───┤       │
+ │                                    write-only API keys                ▼       │
+ │                              Elasticsearch 127.0.0.1:9200 ─► Kibana 127.0.0.1:5601
+ └──────────────────────────────────────────────────────────────────────────────┘
 ```
+
+## Elastic (current SIEM)
+
+1. Instrument the machine (Step 1 below, `setup.ps1`).
+2. From an **Administrator** PowerShell:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\siem\elastic\install-elastic.ps1
+   ```
+   You choose the `elastic` superuser password. The script then:
+   - **downloads and checks** Elasticsearch, Kibana, Winlogbeat and Filebeat 9.5.6 against Elastic's SHA-512;
+   - **stops Splunk** and sets it to Manual start (Splunk is not removed);
+   - **configures Elasticsearch** for loopback only, a single node, security on, a 1 GB heap and machine learning off;
+   - **sets up the service accounts:** a random password for Kibana's `kibana_system` account, and **write-only API keys** for the Beats, all stored in keystores rather than config files;
+   - **loads the Beats setup** (index templates, ingest pipelines and the Winlogbeat dashboards) and starts the Beats as auto-restarting services;
+   - **checks** that Windows events are arriving.
+3. Verify at any time, without Administrator:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\siem\elastic\verify-elastic.ps1
+   ```
+4. In the console, go to **Connections**, enter the `elastic` login, and the live cards and watchlist fill in. Open **Kibana → Security** for detection rules, alerts and timelines.
+
+| Component | Where | Runs as |
+|---|---|---|
+| Elasticsearch | `C:\Program Files\Elastic\elasticsearch`, data in `C:\ProgramData\Elastic` | Service `elasticsearch-service-x64` (automatic) |
+| Kibana | `C:\Program Files\Elastic\kibana` | Started from the console when needed (about 1 GB of RAM) |
+| Winlogbeat / Filebeat | `C:\Program Files\Elastic\winlogbeat`, `...\filebeat` | Services, restarted automatically on failure |
+
+---
+
+## Previous SIEM: Splunk (reference)
 
 ## Folder layout
 

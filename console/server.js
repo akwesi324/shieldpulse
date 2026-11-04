@@ -268,9 +268,12 @@ async function runAction(toolId, index) {
       return { status: 200, body: { ok: true, message: `Opened ${a.path}` } };
     }
 
-    case 'gui': {
+    case 'gui':
+    case 'background': {
+      // 'background' = no window (e.g. Kibana); the process is tracked so "Stop running" can end it.
       const args = (a.args || []).map(psQuote).join(',');
-      const script = `(Start-Process -FilePath ${psQuote(a.path)}${args ? ` -ArgumentList ${args}` : ''}${a.admin ? ' -Verb RunAs' : ''} -PassThru).Id`;
+      const hidden = a.type === 'background' ? ' -WindowStyle Hidden' : '';
+      const script = `(Start-Process -FilePath ${psQuote(a.path)}${args ? ` -ArgumentList ${args}` : ''}${hidden}${a.admin ? ' -Verb RunAs' : ''} -PassThru).Id`;
       const r = await runPowerShell(script);
       if (r.ok) trackSession(t.id, parseInt(r.stdout, 10), Boolean(a.admin));
       return r.ok ? { status: 200, body: { ok: true, message: `Launched ${a.label}` } }
@@ -360,6 +363,13 @@ async function stopTool(toolId) {
       const sys = systemCache.data || await getSystemSnapshot(serviceNames);
       sys.procs.filter((p) => p.path.toLowerCase() === a.exePath.toLowerCase()).forEach((p) => targets.push({ pid: p.id }));
     }
+    if (a.type === 'kill' && a.exePathPrefix) {
+      // Every process running from an install folder (e.g. Kibana's bundled node.exe), without
+      // touching other node.exe processes such as this console.
+      const prefix = a.exePathPrefix.toLowerCase();
+      const sys = await (async () => { systemCache.at = 0; return getSystemSnapshot(serviceNames); })();
+      sys.procs.filter((p) => p.path && p.path.toLowerCase().startsWith(prefix)).forEach((p) => targets.push({ pid: p.id }));
+    }
   }
 
   // 1. Without elevation: kill process trees; services are checked in parallel.
@@ -429,17 +439,17 @@ function readJsonBody(req, limit = 16 * 1024) {
 // Connections (credentials are verified against the live service before being stored)
 
 const CONNECTIONS = {
-  splunk: {
-    label: 'Splunk',
+  elastic: {
+    label: 'Elastic',
     async save(body) {
       const username = String(body.username || '').trim();
       const password = String(body.password || '');
-      if (!username || !password) throw new Error('Enter the Splunk username and password.');
-      const version = await live.testSplunk({ username, password }).catch((e) => {
-        throw new Error(e.auth ? 'Splunk rejected that username or password.' : `Could not reach Splunk: ${e.message}`);
+      if (!username || !password) throw new Error('Enter the Elastic username and password.');
+      const version = await live.testElastic({ username, password }).catch((e) => {
+        throw new Error(e.auth ? 'Elasticsearch rejected that username or password.' : `Could not reach Elasticsearch (is it running?): ${e.message}`);
       });
-      await secrets.save('splunk', { username, password });
-      return `Connected to Splunk ${version} as ${username}.`;
+      await secrets.save('elastic', { username, password });
+      return `Connected to Elasticsearch ${version} as ${username}.`;
     },
   },
   n8n: {

@@ -258,14 +258,14 @@ function renderDashboard() {
   }
 
   const { live = {}, system, tools, categories } = data;
-  const s = live.splunk || {}; const r = live.suricata || {}; const n = live.n8n || {};
+  const s = live.siem || {}; const r = live.suricata || {}; const n = live.n8n || {};
   const events = s.ingestion ? s.ingestion.reduce((a, b) => a + b.count24h, 0) : null;
   const hits = s.watches ? s.watches.filter((w) => w.count > 0) : [];
 
   parts.push(h('p', { class: 'muted small' }, `Updated ${ago(data.generatedAt)} · refreshes every 15 s`));
   parts.push(h('div', { class: 'cards' },
-    liveCard('Splunk', s, s.state === 'connected' ? [`${fmt(events)} events`, 'last 24 h'] : [s.message]),
-    liveCard('Watchlist', s, s.state === 'connected' ? [hits.length ? `${hits.length} triggered` : 'All quiet', 'last 24 h'] : ['Needs Splunk']),
+    liveCard('Elastic SIEM', s, s.state === 'connected' ? [`${fmt(events)} events`, `last 24 h · ${s.health}`] : [s.message]),
+    liveCard('Watchlist', s, s.state === 'connected' ? [hits.length ? `${hits.length} triggered` : 'All quiet', 'last 24 h'] : ['Needs Elastic']),
     liveCard('Suricata', r, r.state === 'connected' ? [`${r.alerts.length} alerts`, `last event ${ago(r.lastEvent)}`] : [r.message]),
     liveCard('n8n', n, n.state === 'connected' ? [`${n.workflows.filter((w) => w.active).length} active`, `${n.workflows.length} workflows`] : [n.message])));
 

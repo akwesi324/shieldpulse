@@ -1,68 +1,89 @@
 {
-  "$comment": "Security events the console counts over the last 24 hours in Splunk. Each 'spl' is a Splunk search (no leading 'search'). The console's own PowerShell helpers are excluded so they do not count as activity.",
+  "$comment": "Security events the console counts over the last 24 hours in Elastic. 'query' is Elasticsearch query DSL over ECS fields (Winlogbeat / Filebeat); 'kql' is the same search for the 'Open in Kibana' link. The console's own PowerShell helpers (parent node.exe) are excluded so they do not count as activity.",
   "watches": [
     {
       "id": "failed-logons",
       "title": "Failed logons",
       "attack": "T1110",
       "severity": "medium",
-      "spl": "index=wineventlog EventCode=4625"
+      "kql": "winlog.channel : \"Security\" and event.code : \"4625\"",
+      "query": { "bool": { "filter": [ { "term": { "winlog.channel": "Security" } }, { "term": { "event.code": "4625" } } ] } }
     },
     {
       "id": "account-created",
       "title": "User account created",
       "attack": "T1136.001",
       "severity": "high",
-      "spl": "index=wineventlog EventCode=4720"
+      "kql": "winlog.channel : \"Security\" and event.code : \"4720\"",
+      "query": { "bool": { "filter": [ { "term": { "winlog.channel": "Security" } }, { "term": { "event.code": "4720" } } ] } }
     },
     {
       "id": "added-to-group",
       "title": "User added to a local group",
       "attack": "T1098",
       "severity": "high",
-      "spl": "index=wineventlog EventCode=4732"
+      "kql": "winlog.channel : \"Security\" and event.code : \"4732\"",
+      "query": { "bool": { "filter": [ { "term": { "winlog.channel": "Security" } }, { "term": { "event.code": "4732" } } ] } }
     },
     {
       "id": "scheduled-task",
       "title": "Scheduled task created",
       "attack": "T1053.005",
       "severity": "medium",
-      "spl": "index=wineventlog EventCode=4698"
+      "kql": "winlog.channel : \"Security\" and event.code : \"4698\"",
+      "query": { "bool": { "filter": [ { "term": { "winlog.channel": "Security" } }, { "term": { "event.code": "4698" } } ] } }
     },
     {
       "id": "service-installed",
       "title": "Service installed",
       "attack": "T1543.003",
       "severity": "medium",
-      "spl": "index=wineventlog (EventCode=4697 OR EventCode=7045)"
+      "kql": "(winlog.channel : \"Security\" and event.code : \"4697\") or (winlog.channel : \"System\" and event.code : \"7045\")",
+      "query": { "bool": { "should": [
+        { "bool": { "filter": [ { "term": { "winlog.channel": "Security" } }, { "term": { "event.code": "4697" } } ] } },
+        { "bool": { "filter": [ { "term": { "winlog.channel": "System" } }, { "term": { "event.code": "7045" } } ] } }
+      ], "minimum_should_match": 1 } }
     },
     {
       "id": "encoded-powershell",
       "title": "Encoded PowerShell command",
       "attack": "T1059.001",
       "severity": "high",
-      "spl": "index=sysmon EventCode=1 (CommandLine=\"* -enc *\" OR CommandLine=\"* -EncodedCommand *\" OR CommandLine=\"* -e *\") NOT ParentImage=\"*\\\\node.exe\""
+      "kql": "winlog.channel : \"Microsoft-Windows-Sysmon/Operational\" and event.code : \"1\" and process.command_line : (* -enc* or *-EncodedCommand*) and not process.parent.executable : *node.exe",
+      "query": { "bool": {
+        "filter": [ { "term": { "winlog.channel": "Microsoft-Windows-Sysmon/Operational" } }, { "term": { "event.code": "1" } } ],
+        "should": [
+          { "wildcard": { "process.command_line": { "value": "* -enc *", "case_insensitive": true } } },
+          { "wildcard": { "process.command_line": { "value": "* -encodedcommand *", "case_insensitive": true } } },
+          { "wildcard": { "process.command_line": { "value": "* -e *", "case_insensitive": true } } }
+        ],
+        "minimum_should_match": 1,
+        "must_not": [ { "wildcard": { "process.parent.executable": { "value": "*\\node.exe", "case_insensitive": true } } } ]
+      } }
     },
     {
       "id": "log-cleared",
       "title": "Security log cleared",
       "attack": "T1070.001",
       "severity": "critical",
-      "spl": "index=wineventlog EventCode=1102"
+      "kql": "winlog.channel : \"Security\" and event.code : \"1102\"",
+      "query": { "bool": { "filter": [ { "term": { "winlog.channel": "Security" } }, { "term": { "event.code": "1102" } } ] } }
     },
     {
       "id": "defender-detection",
       "title": "Defender malware detection",
       "attack": "",
       "severity": "high",
-      "spl": "index=defender (EventCode=1116 OR EventCode=1117)"
+      "kql": "winlog.channel : \"Microsoft-Windows-Windows Defender/Operational\" and event.code : (\"1116\" or \"1117\")",
+      "query": { "bool": { "filter": [ { "term": { "winlog.channel": "Microsoft-Windows-Windows Defender/Operational" } }, { "terms": { "event.code": ["1116", "1117"] } } ] } }
     },
     {
       "id": "ids-alerts",
       "title": "Suricata IDS alerts",
       "attack": "",
       "severity": "medium",
-      "spl": "index=suricata event_type=alert"
+      "kql": "event.module : \"suricata\" and event.kind : \"alert\"",
+      "query": { "bool": { "filter": [ { "term": { "event.module": "suricata" } }, { "term": { "event.kind": "alert" } } ] } }
     }
   ]
 }

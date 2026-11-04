@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Connection secrets (Splunk login, n8n API key), encrypted with Windows DPAPI for the current
+ * Connection secrets (Elastic login, n8n API key), encrypted with Windows DPAPI for the current
  * Windows user (ConvertFrom-SecureString). Only this Windows account on this machine can decrypt
  * them. Stored at %LOCALAPPDATA%\SecurityLabs\console\secrets.json, outside the repo.
  *

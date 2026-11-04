@@ -181,8 +181,9 @@ async function phoneState() {
   const s = await deps.buildState();
   const live = deps.getLive();
   // Drop links to localhost URLs: they would point at the phone itself.
-  if (live.splunk && live.splunk.watches) live.splunk.watches = live.splunk.watches.map(({ link, ...w }) => w);
-  if (live.splunk && live.splunk.ingestion) live.splunk.ingestion = live.splunk.ingestion.map(({ link, ...i }) => i);
+  if (live.siem && live.siem.watches) live.siem.watches = live.siem.watches.map(({ link, ...w }) => w);
+  if (live.siem && live.siem.ingestion) live.siem.ingestion = live.siem.ingestion.map(({ link, ...i }) => i);
+  if (live.siem) delete live.siem.web;
   return {
     system: { hostname: s.system.hostname, totalMemMB: s.system.totalMemMB, freeMemMB: s.system.freeMemMB },
     categories: s.categories,
