@@ -1,6 +1,6 @@
 :root {
   --bg: #0f1115; --surface: #171a21; --surface-2: #1d2129; --border: #2a2f3a;
-  --text: #e7e9ee; --muted: #9aa3b2; --accent: #5b8ff0; --accent-soft: #1b2740;
+  --text: #e7e9ee; --muted: #9aa3b2; --accent: #2dd4bf; --accent-soft: #0f2f2c; --brand-gradient: linear-gradient(120deg, #14b8a6 0%, #0ea5e9 50%, #8b5cf6 100%);
   --ok: #3ccf7a; --ok-soft: #14301f; --warn: #e2a64a; --warn-soft: #33270f; --danger: #f07070; --idle: #6b7486;
   --radius: 14px;
   --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -17,7 +17,7 @@ button, input { font: inherit; color: inherit; }
 
 .top { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: rgba(15, 17, 21, .94); border-bottom: 1px solid var(--border); }
 .mark { width: 30px; height: 30px; flex: none; }
-.mark .shield { fill: rgba(91, 143, 240, .18); stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; }
+.mark .shield { fill: rgba(45, 212, 191, .18); stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; }
 .mark .pulse { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .title { display: grid; flex: 1; min-width: 0; line-height: 1.2; }
 .title strong { font-size: 17px; }
@@ -36,7 +36,7 @@ p { margin: 0; }
 
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
 .btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 48px; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface-2); font-weight: 600; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #0b1020; }
+.btn.primary { background: var(--brand-gradient); border-color: transparent; color: #fff; box-shadow: 0 4px 14px -4px rgb(14 165 233 / .45); }
 .btn.danger { color: var(--danger); border-color: var(--danger); background: transparent; }
 .btn[disabled] { opacity: .55; }
 .row { display: flex; gap: 10px; }
